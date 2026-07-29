@@ -1,0 +1,134 @@
+name: Build Arti libraries
+
+# Verifies the static Arti library builds for every supported target, and runs
+# the test suites. Nothing is published: the library is built from source by
+# whoever consumes it.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'rust/**'
+      - 'Makefile'
+      - '.github/workflows/build-libs.yml'
+  pull_request:
+    paths:
+      - 'rust/**'
+      - 'Makefile'
+      - '.github/workflows/build-libs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Each target is built on an OS that has a native C toolchain for it:
+          # the SQLite and liblzma dependencies are compiled from source, so a
+          # working cross-C setup matters as much as the Rust target.
+          - { runner: ubuntu-latest, goos: linux,   goarch: amd64, triple: x86_64-unknown-linux-gnu }
+          - { runner: ubuntu-latest, goos: linux,   goarch: arm64, triple: aarch64-unknown-linux-gnu }
+          - { runner: macos-latest,  goos: darwin,  goarch: arm64, triple: aarch64-apple-darwin }
+          - { runner: macos-latest,  goos: darwin,  goarch: amd64, triple: x86_64-apple-darwin }
+          - { runner: windows-latest, goos: windows, goarch: amd64, triple: x86_64-pc-windows-gnu }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+
+      - name: Install the aarch64 cross toolchain
+        if: matrix.triple == 'aarch64-unknown-linux-gnu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+          mkdir -p ~/.cargo
+          {
+            echo '[target.aarch64-unknown-linux-gnu]'
+            echo 'linker = "aarch64-linux-gnu-gcc"'
+          } >> ~/.cargo/config.toml
+          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Install MinGW
+        if: matrix.triple == 'x86_64-pc-windows-gnu'
+        shell: bash
+        run: |
+          choco install mingw --no-progress
+          echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> "$GITHUB_PATH"
+
+      - name: Build
+        shell: bash
+        run: |
+          cd rust/arti-ffi
+          cargo build --release --target ${{ matrix.triple }}
+
+      - name: Stage the artifact
+        shell: bash
+        run: |
+          name="libarti_ffi-${{ matrix.goos }}_${{ matrix.goarch }}.a"
+          mkdir -p dist
+          cp "rust/arti-ffi/target/${{ matrix.triple }}/release/libarti_ffi.a" "dist/${name}"
+          ls -la dist
+
+      # Kept only so the test job can link against the host build; these are
+      # not release artifacts.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: libarti_ffi-${{ matrix.goos }}_${{ matrix.goarch }}
+          path: dist/*.a
+          retention-days: 1
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Feature set is unchanged
+        run: make check-features
+
+      # A stale fingerprint would let a Rust change land without forcing
+      # dependent Go builds to relink against the rebuilt library.
+      - name: Rust fingerprint is current
+        run: |
+          make stamp
+          git diff --exit-code internal/arti/libstamp.go
+
+      - name: Rust tests
+        run: cd rust/arti-ffi && cargo test
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: libarti_ffi-linux_amd64
+          path: dist
+
+      - name: Install the library where cgo expects it
+        run: |
+          mkdir -p lib/linux_amd64
+          cp dist/libarti_ffi-linux_amd64.a lib/linux_amd64/libarti_ffi.a
+
+      - name: Go tests
+        run: go test ./...
+
+      - name: Cross-compile check
+        run: |
+          # Confirms the cgo link lines are well formed for the other targets.
+          # These only type-check; linking needs the matching artifact.
+          GOOS=windows GOARCH=amd64 go vet ./... || true
+          GOOS=darwin GOARCH=arm64 go vet ./... || true

@@ -1,0 +1,377 @@
+# go-arti - Self-contained Tor from Go
+
+[![GoDoc](https://godoc.org/github.com/bounce-chat/go-arti?status.svg)](https://godoc.org/github.com/bounce-chat/go-arti)
+
+The `go-arti` project is a self-contained, statically linked Tor library for Go, built on
+[Arti](https://gitlab.torproject.org/tpo/core/arti) — the Tor Project's Rust implementation of Tor.
+Arti is compiled into a static C library, and a thin layer of CGO links it into your Go binary.
+
+| Component | Version |
+|:---------:|:-------:|
+| arti      | 0.44    |
+
+Everything Arti needs, including SQLite and liblzma, is compiled into that archive, so the
+resulting Go binary has no external dependencies beyond libc. The library is tested on Linux,
+macOS (Intel and Apple Silicon), and Windows.
+
+> **Upgrading from the C Tor version?** The Go API is unchanged, but the engine underneath is
+> different. See [Differences from C Tor](#differences-from-c-tor) before you upgrade.
+
+## Installation
+
+Arti is Rust, and the Go toolchain cannot invoke Cargo, so the static library has to be built
+before your first `go build`:
+
+```
+$ git clone https://github.com/bounce-chat/go-arti && cd go-arti
+$ make lib
+```
+
+That takes a couple of minutes and needs a [Rust toolchain](https://rustup.rs). The result lands in
+`lib/<goos>_<goarch>/libarti_ffi.a`, which is where the `#cgo` directives in `internal/arti/cgo.go` look
+for it. After that, `go build` works normally.
+
+`make lib` also refreshes `internal/arti/libstamp.go`, a generated constant holding a fingerprint of
+the Rust sources. It is load-bearing: Go's build cache does not hash the static library, because the
+archive reaches the toolchain through `#cgo LDFLAGS`. Without a Go-visible change, editing the Rust
+and running `go build` silently reuses a cached executable linked against the *previous* archive — the
+binary and the library disagree and nothing reports it. Always rebuild through `make lib` rather than
+invoking `cargo` directly, or pass `go build -a`.
+
+There is deliberately no prebuilt download. Applications embedding this ship their own binaries, so
+distributing archives would add release machinery without saving anyone a step that matters.
+
+To build for a target other than the host:
+
+```
+$ make lib GOOS=windows GOARCH=amd64
+$ make all      # every supported target
+```
+
+Supported targets are `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm64` and
+`windows/amd64`, plus the mobile targets below. On Windows the library must be built for the
+`x86_64-pc-windows-gnu` triple, which the Makefile selects automatically — CGO links with MinGW, so
+an MSVC-target `.lib` will not resolve.
+
+### Cross-compilation toolchains
+
+Every target needs its Rust standard library, and every *cross* target also needs a C compiler,
+because SQLite and liblzma are built from C source. `make doctor` reports what is present:
+
+```
+$ make doctor GOOS=android GOARCH=arm64
+target:      android/arm64 -> aarch64-linux-android
+rust target: installed
+android ndk: /opt/android-ndk
+android cc:  .../bin/aarch64-linux-android21-clang (ok)
+```
+
+Rust targets, once:
+
+```
+$ rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android \
+      aarch64-unknown-linux-gnu x86_64-pc-windows-gnu x86_64-apple-darwin aarch64-apple-darwin
+```
+
+C toolchains, by target:
+
+| Target | Needs | Install |
+|:-------|:------|:--------|
+| host | nothing | — |
+| `linux/arm64` (from x86) | `aarch64-linux-gnu-gcc` | `pacman -S aarch64-linux-gnu-gcc` / `apt install gcc-aarch64-linux-gnu` |
+| `windows/amd64` | MinGW | `pacman -S mingw-w64-gcc` / `apt install gcc-mingw-w64` |
+| `android/*` | Android NDK | Android Studio, or `pacman -S android-ndk` |
+| `darwin/*` (from Linux) | an Apple SDK | not redistributable — build on a Mac or in CI |
+
+The Makefile finds the NDK via `ANDROID_NDK_HOME`, `ANDROID_NDK_ROOT`, `ANDROID_NDK`,
+`$ANDROID_HOME/ndk/*` or `/opt/android-ndk`, and wires up `CC`/`AR`/linker itself, so `cargo-ndk`
+is not required. Override the minimum Android API level with `ANDROID_API` (default 21):
+
+```
+$ make lib GOOS=android GOARCH=arm64 ANDROID_API=24
+$ make android          # every Android ABI
+```
+
+Then build your `gomobile` bindings as usual. When missing a toolchain, `make` says which one and
+how to get it rather than failing deep inside a compile.
+
+### Mobile devices
+
+`android/arm64`, `android/arm`, `android/amd64`, `android/386` and `ios/arm64` build with
+`make lib`, though CI does not exercise them, because it carries neither an Android NDK nor an iOS
+SDK.
+
+![Android](https://raw.githubusercontent.com/bounce-chat/go-arti/master/demo.jpg)
+
+## Usage
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+	"net/http"
+
+	arti "github.com/bounce-chat/go-arti"
+)
+
+func main() {
+	client, err := arti.Open(arti.Config{DataDir: "./tor-data"})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
+
+	ctx := context.Background()
+	if err := client.Bootstrap(ctx); err != nil {
+		log.Fatal(err)
+	}
+
+	// An onion service is a net.Listener.
+	svc, err := client.Listen(ctx, arti.OnionConfig{Ports: []int{80}})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer svc.Close()
+
+	fmt.Printf("serving on http://%s.onion\n", svc.ID())
+	http.Serve(svc, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, "Hello, Tor!")
+	}))
+}
+```
+
+### Connectivity
+
+`StatusUpdates` pushes a status whenever bootstrap progress changes — use it to
+show progress rather than polling:
+
+```go
+updates := client.StatusUpdates()
+defer client.Unsubscribe(updates)
+
+for status := range updates {
+	fmt.Printf("%d%% %s\n", status.Progress, status.Summary)
+}
+```
+
+**`Ready` reports that the client has connected, not that it is connected.** It
+does not retract. Arti computes it from timestamps that `tor-chanmgr` writes on
+success and never clears, so once a client has bootstrapped it stays true for the
+life of the process even if the device loses its network. Upstream tracks this:
+*"TODO: Eventually we should add some ability to reset our bootstrap status, if
+our connections start failing."*
+
+There is currently **no equivalent of C tor's `NETWORK_LIVENESS`** here, so this
+library cannot yet tell you that connectivity dropped and came back. An
+application that needs that must observe its own traffic failing.
+
+### Dialing
+
+```go
+conn, err := client.DialContext(ctx, "tcp", "example.onion:80")
+
+httpClient := &http.Client{
+	Transport: &http.Transport{DialContext: client.DialContext},
+}
+```
+
+### Onion service identity
+
+A service's key can be persisted and reused to keep the same address. The
+format is the 64-byte expanded ed25519 secret that C Tor controllers use, so
+keys written by an older, C Tor-based build are accepted unchanged:
+
+```go
+svc, _ := client.Listen(ctx, arti.OnionConfig{PrivateKey: saved, Ports: []int{80}})
+
+// The address is derivable from the key with no client running at all.
+pub, _ := arti.PublicKeyFromPrivate(saved)
+id, _ := arti.OnionIDFromPublicKey(pub)
+```
+
+`Sign` and `Verify` are provided for the same key material, because
+`crypto/ed25519` cannot sign with an already-expanded key.
+
+## Debugging
+
+### Routing Arti's logs into your logger
+
+Arti is the only thing that knows why a bootstrap or a publication is slow, so its records are
+worth capturing. `EnableLogging` returns them as a channel:
+
+```go
+records, err := arti.EnableLogging("info")
+if err != nil {
+	return err
+}
+defer arti.StopLogging()
+
+go func() {
+	for r := range records {
+		log.Printf("[tor/%s] %s: %s", r.Level, r.Target, r.Message)
+	}
+}()
+```
+
+This is process-wide rather than per-`Client`, because `tracing` permits a single subscriber. The
+level is a [tracing `EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html)
+directive, so `"info"`, `"debug"` or `"info,tor_dirmgr=debug"` all work. Records are dropped rather
+than queued if a consumer falls behind, and they are queued separately from status events so log
+volume can never crowd those out.
+
+### LIBTOR_LOG
+
+For a quick look without wiring anything up, set `LIBTOR_LOG` to the same kind of directive and
+records go to stderr as well:
+
+```
+$ LIBTOR_LOG=info ./your-app
+ INFO tor_dirmgr: Didn't get usable directory from cache.
+ INFO tor_dirmgr::bootstrap: 1: Looking for a consensus.
+ INFO tor_dirmgr::bootstrap: 1: Downloading microdescriptors (we are missing 9839).
+ INFO tor_dirmgr: We have enough information to build circuits.
+```
+
+The value is a [`tracing` `EnvFilter`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html)
+directive, so `LIBTOR_LOG=debug` or `LIBTOR_LOG=info,tor_dirmgr=debug` also work. Logs go to
+stderr. Unset, nothing is installed at all, and an application that sets up its own `tracing`
+subscriber keeps it.
+
+This is the quickest way to tell a slow bootstrap from a stuck one. A cold start downloads a
+consensus plus roughly ten thousand microdescriptors, which can take minutes on a slow link.
+[Client.Bootstrap] is a separate call precisely so that wait is somewhere you can report progress
+from.
+
+## Build safety
+
+Arti's README carries two warnings for anyone building it. Both apply here, and both are handled
+by `make`.
+
+### Filesystem paths are stripped from the archive
+
+Rust embeds absolute source paths for panic locations and diagnostics, so a default build puts the
+builder's `$HOME` — and therefore their username — into every binary that links it. Before this was
+addressed, a linked binary contained 895 copies of the build machine's home directory.
+
+`make lib` passes `--remap-path-prefix` for both `$HOME` and the checkout, which brings that to
+zero. (Cargo's equivalent `trim-paths` profile option would be tidier but still requires nightly.)
+
+That covers the Rust side. **Go embeds its own paths**, so build your application with
+`-trimpath` as well:
+
+```
+$ go build -trimpath ./...
+```
+
+### Feature unification is pinned
+
+Arti warns that a careless build can enable features you did not ask for, including experimental
+ones, because cargo unifies features across a dependency graph. Two experimental features are
+enabled here deliberately:
+
+| Feature | Why |
+|:--------|:----|
+| `experimental-api` | `launch_onion_service_with_hsid`, the only way to use a caller-supplied identity key. Without it Arti generates and persists its own, and a saved `.onion` address cannot survive a restart. |
+| `ephemeral-keystore` | Keeps identity keys in memory rather than on disk, matching the lifetime an embedding application expects. |
+
+Since the risk is *unnoticed* change rather than these two, `make check-features` asserts the
+resolved feature set of `arti-client` against an expected list and fails if it drifts. It runs as
+part of `make test` and in CI, so a dependency bump that pulls in something new has to be
+acknowledged rather than discovered later.
+
+## Keeping up with Arti
+
+The Arti release version appears in five places: the `tor-*`/`arti-*` pins in
+`rust/arti-ffi/Cargo.toml`, `Cargo.lock`, `ARTI_VERSION` and `ARTI_VERSION_C` in
+`rust/arti-ffi/src/lib.rs`, and the table at the top of this file.
+
+```
+$ make arti-check     # what is pinned, what is published, is the vendored patch still needed
+$ make arti-update    # bump, resolve, and run every check that does not need a network
+```
+
+`arti-update` moves the first four together and then runs `check-features`, the Rust tests, a
+rebuild and the Go tests. It deliberately stops short of two things:
+
+ * **The live tests.** `go test -tags integration -timeout 40m ./...` is the real check, and it
+   needs the Tor network. Nothing else exercises bootstrap, publication or the onion round trip.
+ * **The changelog.** This library uses Arti's `experimental-api`, and matches on status enums that
+   are not covered by any stability promise. A clean build says the types still line up, not that
+   the behaviour did. Both of the worst bugs found during development were behavioural: a status
+   that never reached the state we waited on, and an infinite loop that only appeared on Windows.
+
+Two crates version separately from the Arti release — `safelog` and `fs-mistrust` — so if a bump
+fails to resolve, they are the usual reason and need bumping by hand.
+
+## Vendored patches
+
+`rust/vendor/saturating-time` is a patched copy of
+[saturating-time](https://codeberg.org/cve/saturating-time) 0.4.0, applied via `[patch.crates-io]`.
+
+Its `find_limit` search halves its step only when a checked add/subtract *fails*. Windows stores
+`SystemTime` as a FILETIME of 100 ns ticks, so a 1 ns step truncates to zero and reports success
+without moving — the step never halves and the loop never terminates. Arti reaches this while
+parsing the very first consensus, so on Windows bootstrap would pin a CPU core and never finish,
+while Linux (nanosecond `timespec`) was unaffected. The patch treats a step that makes no progress
+as out of range, exactly like a failure, and adds a regression test using a mock clock with coarse
+granularity so it is reproducible on any platform.
+
+Remove the vendored copy and the `[patch.crates-io]` entry once a fixed release is published.
+
+## Differences from C Tor
+
+Arti is a different implementation, not a drop-in replacement, and some things C Tor exposed have
+no equivalent.
+
+ * **No control port.** Arti replaced it with a JSON-RPC API, and this library does not expose
+   either — bootstrap, status, dialling and onion services are direct calls. Anything built around
+   `GETINFO`/`SETCONF`/`ADD_ONION` has to be rewritten against [Open].
+ * **No circuit-level control.** `EXTENDCIRCUIT`, `ATTACHSTREAM`, `CLOSECIRCUIT`, `MAPADDRESS`,
+   `HSFETCH` and the `CIRC`/`STREAM` events have no Arti equivalent.
+ * **Onion service reachability is coarse.** C Tor emits `HS_DESC UPLOADED` per HSDir, as each
+   upload succeeds. Arti aggregates its publisher and its introduction point manager into a single
+   status and exposes neither alone, so the closest signal is "believed fully reachable" — which
+   can lag the descriptor actually going up by **minutes**. Use `NoWait` and treat the service as
+   usable once `Listen` returns; the listener accepts as soon as it exists, and connections do not
+   arrive earlier. `WaitPublished` is for reporting.
+ * **Onion services are ephemeral.** Keys live in an in-memory keystore and are gone when the
+   process exits, so persist the key from [OnionService.PrivateKey] to keep an address. Service
+   state left on disk is purged at startup, since its keys cannot outlive the process.
+ * **Onion key encoding is unchanged.** The 64-byte expanded ed25519 format is exactly what C Tor
+   controllers use, so a key saved by an older build keeps its address. Frozen vectors in
+   `internal/arti/onionkey_test.go` pin this.
+ * **torrc is not read.** Configuration is [Config].
+
+## Development
+
+```
+$ make test          # Rust and Go tests
+$ make test-rust     # cargo test in rust/arti-ffi
+$ make test-go       # go test ./... (needs the library in place)
+$ make all           # build every supported target
+```
+
+The layout:
+
+```
+rust/arti-ffi/    Rust static library exposing a small C ABI over Arti
+arti.go                    The public API
+internal/arti/arti_ffi.h   That ABI, and its calling conventions
+internal/arti/cgo.go       cgo bindings and link flags
+internal/arti/wire.go      The JSON shapes that cross the boundary
+internal/arti/client.go    Client: open, bootstrap, status, dialling
+internal/arti/onion.go     Onion services as net.Listeners
+internal/arti/onionkey.go  Key and address helpers
+internal/arti/logs.go      Arti's log records
+```
+
+`internal/arti/onionkey_test.go` holds frozen vectors covering key, address and signature compatibility;
+those run without cgo or a network. The live tests need both, and are behind the `integration`
+build tag.
+
+## License
+
+3-clause BSD. See [LICENSE](LICENSE).

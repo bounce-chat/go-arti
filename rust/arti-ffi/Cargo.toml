@@ -1,0 +1,99 @@
+[package]
+name = "arti-ffi"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Minimal C ABI over Arti, backing the go-libtor cgo bindings"
+publish = false
+
+[lib]
+name = "arti_ffi"
+crate-type = ["staticlib", "rlib"]
+
+[features]
+default = ["compression"]
+
+# Directory compression. On by default because it cuts the bootstrap download
+# substantially, but it is the one part of the build that pulls in vendored C
+# codecs (liblzma, zstd), so being able to turn it off isolates them when a
+# platform misbehaves: `cargo build --no-default-features`.
+compression = ["arti-client/compression"]
+
+[dependencies]
+arti-client = { version = "0.44", default-features = false, features = [
+    "tokio",
+    "rustls",
+    "onion-service-client",
+    "onion-service-service",
+    "ephemeral-keystore",
+    "experimental-api",
+    "bridge-client",
+    "pt-client",
+    # Compiles SQLite into the archive. Without this the resulting .a has an
+    # undefined reference to the system libsqlite3, which would defeat the
+    # point of linking statically.
+    "static-sqlite",
+] }
+tor-rtcompat = { version = "0.44", features = ["tokio", "rustls"] }
+tor-hsservice = "0.44"
+tor-hsrproxy = "0.44"
+tor-hscrypto = "0.44"
+tor-llcrypto = "0.44"
+tor-config = "0.44"
+tor-keymgr = "0.44"
+tor-persist = "0.44"
+fs-mistrust = "0.15"
+safelog = "0.9"
+
+# Arti leaves the rustls crypto provider to the embedding application. We pick
+# `ring` over `aws-lc-rs` because it cross-compiles cleanly to every target we
+# publish; aws-lc-rs wants cmake and nasm, which the windows-gnu build lacks.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+# Arti logs through `tracing`. Without a subscriber those records are simply
+# discarded, which makes a slow bootstrap indistinguishable from a hung one.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = [
+    "fmt",
+    "env-filter",
+    "ansi",
+    "registry",
+    "std",
+] }
+
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "sync", "time", "macros"] }
+tokio-util = { version = "0.7", features = ["compat"] }
+futures = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+rand = "0.10"
+
+# Not used directly. Arti's directory compression pulls liblzma in
+# transitively, and without this the archive would carry an undefined
+# reference to the system liblzma. Declaring it here turns on the vendored
+# build via feature unification, so the .a stays self-contained.
+liblzma-sys = { version = "0.4", features = ["static"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+# Filesystem paths are stripped via --remap-path-prefix, set by the Makefile.
+# The equivalent `trim-paths` profile option still requires nightly.
+
+[workspace]
+
+# saturating-time 0.4.0 hangs forever on Windows. Its `find_limit` search only
+# halves its step when a checked add/sub fails, but Windows stores SystemTime
+# as a FILETIME of 100ns ticks, so a 1ns step truncates to zero and "succeeds"
+# without moving — the step never halves and the loop never ends. Arti hits
+# this while parsing the very first consensus (tor-netdoc's
+# Preamble::validity_time_range), so bootstrap pins a core and never completes.
+#
+# The vendored copy treats a step that makes no progress as out of range, the
+# same as a failure. Reported upstream; drop this once a fixed release exists.
+# Upstream: https://codeberg.org/cve/saturating-time
+[patch.crates-io]
+saturating-time = { path = "../vendor/saturating-time" }
