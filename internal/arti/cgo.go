@@ -23,6 +23,7 @@ package arti
 #cgo darwin,amd64,!ios     LDFLAGS: -L${SRCDIR}/../../lib/darwin_amd64
 #cgo darwin,arm64,!ios     LDFLAGS: -L${SRCDIR}/../../lib/darwin_arm64
 #cgo windows,amd64         LDFLAGS: -L${SRCDIR}/../../lib/windows_amd64
+#cgo openbsd,amd64         LDFLAGS: -L${SRCDIR}/../../lib/openbsd_amd64
 #cgo android,arm64         LDFLAGS: -L${SRCDIR}/../../lib/android_arm64
 #cgo android,arm           LDFLAGS: -L${SRCDIR}/../../lib/android_arm
 #cgo android,amd64         LDFLAGS: -L${SRCDIR}/../../lib/android_amd64
@@ -32,6 +33,20 @@ package arti
 #cgo linux,!android LDFLAGS: -larti_ffi -lm -ldl -lpthread
 // Bionic folds libpthread and librt into libc, and has no -lpthread to link.
 #cgo android        LDFLAGS: -larti_ffi -lm -ldl -llog
+// This list is what `rustc --print native-static-libs` reports for
+// x86_64-unknown-openbsd, minus -lc which the compiler driver adds itself.
+// It is longer than the Linux one for two reasons worth knowing:
+//
+//   * -lc++abi provides the unwinder. OpenBSD's toolchain is LLVM, so the
+//     _Unwind_* symbols Rust's panic machinery needs come from libc++abi
+//     rather than libgcc. Omitting it fails the link with ~11k undefined
+//     references to _Unwind_Resume alone.
+//   * -lexecinfo backs std's backtrace support, and -lutil and -lcompiler_rt
+//     are pulled in by std as well.
+//
+// There is deliberately no -ldl: OpenBSD has no libdl, because dlopen and
+// friends live in libc, and asking for it fails the link outright.
+#cgo openbsd        LDFLAGS: -larti_ffi -lpthread -lc++abi -lm -lutil -lexecinfo -lcompiler_rt
 #cgo darwin,!ios    LDFLAGS: -larti_ffi -framework CoreFoundation -framework Security
 #cgo ios            LDFLAGS: -larti_ffi -framework CoreFoundation -framework Security
 #cgo windows        LDFLAGS: -larti_ffi -lws2_32 -luserenv -lbcrypt -lntdll -ladvapi32 -lcrypt32 -lsecur32

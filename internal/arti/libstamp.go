@@ -10,4 +10,4 @@ package arti
 // change a rebuilt library is silently ignored in favour of a cached
 // binary. Keeping this in step with the Rust is what makes
 // `make lib && go build` produce a binary containing the new library.
-const rustFingerprint = "ea30565cc1df7f72"
+const rustFingerprint = "5dbcf4248a41dc6c"
