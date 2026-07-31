@@ -29,8 +29,8 @@ type OnionConfig struct {
 	// for it to become reachable.
 	//
 	// This is usually what you want. The returned listener accepts as soon as
-	// it exists — connections simply do not arrive until the service is
-	// published — whereas waiting can take minutes for reasons unrelated to
+	// it exists - connections simply do not arrive until the service is
+	// published - whereas waiting can take minutes for reasons unrelated to
 	// whether the descriptor is up. See [OnionService.WaitPublished].
 	NoWait bool
 }

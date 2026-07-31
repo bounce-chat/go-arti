@@ -6,8 +6,8 @@
 // Neither form helps: `-L<dir> -l<name>` and a direct path to the .a were both
 // measured to leave a stale binary in place after the archive changed. Worse,
 // the staleness survives `go clean -cache`, because `go build -o` compares the
-// existing output file's embedded build ID — which does not incorporate the
-// archive — and concludes it is up to date. The only reliable remedies are to
+// existing output file's embedded build ID - which does not incorporate the
+// archive - and concludes it is up to date. The only reliable remedies are to
 // delete the output binary, to pass `go build -a`, or to make a Go source file
 // change. This program is that source change: rebuilding the Rust rewrites the
 // constant, which invalidates the package, which forces the relink.
@@ -17,7 +17,7 @@
 // The obvious shell version, `... | sha256sum`, is not portable: OpenBSD and
 // FreeBSD have sha256, macOS has shasum, and none of them have sha256sum. Tool
 // detection would fix the hash but leave two subtler hazards, because `find`
-// and `sort` also differ — and `sort` is locale-dependent, so the same sources
+// and `sort` also differ - and `sort` is locale-dependent, so the same sources
 // can order differently on two machines and produce different fingerprints.
 // Doing the walk, the ordering and the hashing here removes all three at once,
 // and adds no dependency: the Go toolchain is already required to use this
@@ -47,8 +47,8 @@ const fingerprintLen = 16
 // fail-open: a sparse checkout, an interrupted `git clean`, or dropping the
 // vendored patch once its fix lands upstream would each hash some subset and
 // report a plausible, wrong fingerprint. Walking is also churn-prone, because
-// any untracked .rs/.toml under rust/ — `rust/.cargo/config.toml` is the
-// obvious one — would change the committed constant and fail CI for a file
+// any untracked .rs/.toml under rust/ - `rust/.cargo/config.toml` is the
+// obvious one - would change the committed constant and fail CI for a file
 // that is not in the repository.
 var sources = []string{
 	"rust/arti-ffi/Cargo.toml",
@@ -75,7 +75,7 @@ func run(root, out, pkg string) error {
 		return err
 	}
 	// Fail closed. An empty file list would hash to a constant, which would
-	// look like success while silently disabling the whole mechanism — the
+	// look like success while silently disabling the whole mechanism - the
 	// exact failure mode the shell version had when sha256sum was missing.
 	if len(files) == 0 {
 		return fmt.Errorf("no source files found under %v; refusing to write an empty fingerprint", sources)
@@ -112,7 +112,7 @@ func run(root, out, pkg string) error {
 // The paths are slash-normalised BEFORE sorting, which matters more than it
 // looks. '/' is 0x2F and '\' is 0x5C, so sorting native paths orders a Windows
 // checkout differently from a Unix one wherever a directory competes with a
-// sibling file — and a different order means a different fingerprint from
+// sibling file - and a different order means a different fingerprint from
 // identical sources, which is precisely the divergence this whole design is
 // meant to rule out.
 func collect(root string) ([]string, error) {

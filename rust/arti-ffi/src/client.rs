@@ -205,7 +205,7 @@ impl Client {
         // Wait for it rather than racing the background bootstrap task.
         // `set_network_enabled` only spawns bootstrapping, and this client is
         // built with `BootstrapBehavior::Manual`, so Arti refuses to launch a
-        // service on a client that has not finished — it does not wait on our
+        // service on a client that has not finished - it does not wait on our
         // behalf. `bootstrap` is idempotent and returns immediately once the
         // client is ready, so this costs nothing on an already-running client.
         //
@@ -403,7 +403,7 @@ fn summarize(status: &arti_client::status::BootstrapStatus) -> BootstrapStatus {
     // `ready_for_traffic` is the authority for everything here. Arti's
     // `as_frac` is an explicitly heuristic progress estimate that can reach 1.0
     // shortly before the client can actually act on a request, and a caller
-    // that sees `TAG=done` will immediately try to use Tor — bine's
+    // that sees `TAG=done` will immediately try to use Tor - bine's
     // EnableNetwork returns on exactly that. Deriving completion and liveness
     // from the same signal keeps the two from disagreeing.
     let ready = status.ready_for_traffic();

@@ -94,7 +94,7 @@ func alreadyInstalled() bool {
 // StopLogging stops collecting records and closes every channel handed out by
 // [EnableLogging].
 //
-// The subscriber itself cannot be uninstalled — tracing does not allow it — so
+// The subscriber itself cannot be uninstalled - tracing does not allow it - so
 // a later [EnableLogging] resumes delivery at the original level.
 func StopLogging() {
 	logMu.Lock()

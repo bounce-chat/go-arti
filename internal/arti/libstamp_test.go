@@ -7,8 +7,8 @@ import "testing"
 //
 // The fingerprint forces a relink after `make lib` by changing this package's
 // source. That only has an effect if something references the constant: Go does
-// not emit an unreferenced constant into the package object, so the object —
-// and therefore the link action ID, and therefore the binary — stays identical
+// not emit an unreferenced constant into the package object, so the object -
+// and therefore the link action ID, and therefore the binary - stays identical
 // no matter what the fingerprint says. The mechanism silently did nothing until
 // RustFingerprint() existed.
 //

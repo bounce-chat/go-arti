@@ -88,7 +88,7 @@ strip = true
 # saturating-time 0.4.0 hangs forever on Windows. Its `find_limit` search only
 # halves its step when a checked add/sub fails, but Windows stores SystemTime
 # as a FILETIME of 100ns ticks, so a 1ns step truncates to zero and "succeeds"
-# without moving — the step never halves and the loop never ends. Arti hits
+# without moving - the step never halves and the loop never ends. Arti hits
 # this while parsing the very first consensus (tor-netdoc's
 # Preamble::validity_time_range), so bootstrap pins a core and never completes.
 #

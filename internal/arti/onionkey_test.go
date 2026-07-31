@@ -5,7 +5,7 @@ package arti
 //
 // The vectors below were produced by bine (github.com/alexballas/bine), which
 // is what wrote those files. If any of this drifts, an installation silently
-// loses its .onion address, which is not recoverable — so the expected values
+// loses its .onion address, which is not recoverable - so the expected values
 // are frozen here rather than recomputed, and the dependency that produced
 // them is gone.
 

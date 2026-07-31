@@ -20,7 +20,7 @@ func ProviderVersion() string {
 //
 // This accessor is load-bearing, not decoration. Go does not hash the static
 // library named in #cgo LDFLAGS, so rewriting the fingerprint is what forces a
-// relink after `make lib` — but only if something refers to it. An
+// relink after `make lib` - but only if something refers to it. An
 // unreferenced constant is never emitted into the package object, so the
 // object stays byte-identical whatever the fingerprint says and the stale
 // binary is reused anyway. Keep this reference, and keep it in a hand-written
