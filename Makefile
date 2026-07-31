@@ -211,6 +211,14 @@ lib: check-target check-android check-cross
 # nothing says so. Writing the fingerprint into a Go source file makes a Rust
 # change a Go change, which forces the relink.
 #
+# That only works because internal/arti/arti.go refers to the constant from
+# RustFingerprint(). An unreferenced constant is not emitted into the package
+# object at all, so the object stays byte-identical whatever the fingerprint
+# says, the link action ID does not move, and the stale binary is reused
+# anyway. Measured with `go tool buildid`, not assumed: three different
+# fingerprint values all produced content ID GoYe7_KiWL6DBHbInvTP until the
+# accessor existed. TestRustFingerprintIsUsed fails if it is ever tidied away.
+#
 # The hash covers the sources rather than the archive so that rebuilding
 # unchanged code does not churn the file.
 #
@@ -222,9 +230,18 @@ lib: check-target check-android check-cross
 # and produce different fingerprints. tools/stamp does the walk, the ordering
 # and the hashing itself, which removes all three, and costs nothing because
 # the Go toolchain is already required. Please do not "simplify" it back.
+#
+# The empty GOOS/GOARCH/CGO_ENABLED/GOFLAGS are load-bearing. GNU make exports
+# variables set on the command line into every recipe and every sub-make, so
+# `make lib GOOS=windows GOARCH=amd64` puts GOOS=windows into this recipe's
+# environment by way of the $(MAKE) stamp above. A bare `go run` would then
+# cross-compile the generator and fail to execute it ("exec format error"),
+# breaking `make all`, `make android` and every cross build — after the cargo
+# build had already run. An empty assignment reads as "unset" to cmd/go and is
+# a POSIX assignment prefix, so it is safe in ksh, dash and bash alike.
 .PHONY: stamp
 stamp:
-	@go run ./tools/stamp
+	@GOOS= GOARCH= CGO_ENABLED= GOFLAGS= go run ./tools/stamp
 
 ## Build every supported target.
 all:
