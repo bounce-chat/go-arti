@@ -113,8 +113,8 @@ impl Config {
         // walks the whole ancestor chain and refuses to start if any of it is
         // group- or world-writable, which fails for a data directory under
         // /tmp or a shared home. C tor checks the data directory itself and
-        // stops there, so this keeps the guarantee that matters — the
-        // directories holding keys and state are private — without rejecting
+        // stops there, so this keeps the guarantee that matters - the
+        // directories holding keys and state are private - without rejecting
         // locations C tor accepted.
         builder
             .storage()

@@ -62,7 +62,7 @@ pub fn next(timeout: Duration) -> Option<LogRecord> {
 
 /// Install the subscriber, at the given `EnvFilter` directives.
 ///
-/// Idempotent, and returns false if a subscriber was already installed —
+/// Idempotent, and returns false if a subscriber was already installed -
 /// including one belonging to the host application, which is left alone.
 pub fn install(directives: &str, mirror_to_stderr: bool) -> bool {
     let filter = match EnvFilter::try_new(directives) {

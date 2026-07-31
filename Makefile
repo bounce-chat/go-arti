@@ -20,7 +20,7 @@ LIB_NAME  := libarti_ffi.a
 # Keep the builder's filesystem layout out of the archive.
 #
 # Rust embeds absolute source paths for panic locations and diagnostics, which
-# means $HOME — and so the builder's username — ends up in anything that links
+# means $HOME - and so the builder's username - ends up in anything that links
 # this. Remapping replaces them with stable placeholders. The `trim-paths`
 # profile option does the same thing but still requires nightly.
 #
@@ -40,6 +40,13 @@ TRIPLE_linux_arm64   := aarch64-unknown-linux-gnu
 TRIPLE_darwin_amd64  := x86_64-apple-darwin
 TRIPLE_darwin_arm64  := aarch64-apple-darwin
 TRIPLE_windows_amd64 := x86_64-pc-windows-gnu
+
+# OpenBSD builds natively only, so it is not in TARGETS. Cross-compiling to it
+# would need an OpenBSD sysroot to link SQLite and liblzma against, and OpenBSD
+# does not ship one for other hosts to consume. Build it on an OpenBSD machine
+# with `gmake lib` - note gmake, since this Makefile uses GNU syntax and
+# OpenBSD's make is BSD make.
+TRIPLE_openbsd_amd64 := x86_64-unknown-openbsd
 
 # Mobile targets are buildable but not prebuilt, because they need an Android
 # NDK or an iOS SDK that CI does not carry.
@@ -65,7 +72,7 @@ OUT_DIR  := lib/$(PLATFORM)
 # compiler matters as much as the Rust target. The NDK ships API-versioned
 # wrappers (aarch64-linux-android21-clang) and no unversioned
 # `aarch64-linux-android-clang`, which is the name the `cc` crate looks for by
-# default — hence the explicit CC/AR/linker wiring below. This is all cargo-ndk
+# default - hence the explicit CC/AR/linker wiring below. This is all cargo-ndk
 # would have done for us, so it is not a dependency.
 #
 # Override ANDROID_API to raise the minimum supported Android version.
@@ -131,9 +138,15 @@ endif
 
 check-target:
 ifeq ($(TRIPLE),)
-	$(error unsupported target $(GOOS)/$(GOARCH); supported: $(TARGETS) $(ANDROID_TARGETS) ios_arm64)
+	$(error unsupported target $(GOOS)/$(GOARCH); supported: $(TARGETS) $(ANDROID_TARGETS) openbsd_amd64 ios_arm64)
 endif
-	@rustup target list --installed 2>/dev/null | grep -qx '$(TRIPLE)' || { \
+	@# Only rustup can add standard libraries, so only ask it when it is what
+	@# manages this toolchain. A distribution-packaged rustc (OpenBSD ports,
+	@# Debian, Fedora) has no rustup and ships only the host's standard
+	@# library - which is exactly what a native build needs, so an absent
+	@# rustup means "nothing to check", not "not installed".
+	@command -v rustup >/dev/null 2>&1 || exit 0; \
+	rustup target list --installed 2>/dev/null | grep -qx '$(TRIPLE)' || { \
 	    echo "make: the Rust standard library for $(TRIPLE) is not installed."; \
 	    echo "      install it with: rustup target add $(TRIPLE)"; \
 	    exit 1; \
@@ -194,39 +207,41 @@ lib: check-target check-android check-cross
 # Go's build cache does not treat the static library as an input: it reaches the
 # toolchain through `#cgo LDFLAGS`, which is not hashed. Without this, changing
 # the Rust and running `go build` silently reuses a cached executable linked
-# against the previous archive — the binary and the library disagree, and
+# against the previous archive - the binary and the library disagree, and
 # nothing says so. Writing the fingerprint into a Go source file makes a Rust
 # change a Go change, which forces the relink.
 #
+# That only works because internal/arti/arti.go refers to the constant from
+# RustFingerprint(). An unreferenced constant is not emitted into the package
+# object at all, so the object stays byte-identical whatever the fingerprint
+# says, the link action ID does not move, and the stale binary is reused
+# anyway. Measured with `go tool buildid`, not assumed: three different
+# fingerprint values all produced content ID GoYe7_KiWL6DBHbInvTP until the
+# accessor existed. TestRustFingerprintIsUsed fails if it is ever tidied away.
+#
 # The hash covers the sources rather than the archive so that rebuilding
 # unchanged code does not churn the file.
+#
+# The work is done by a Go program rather than inline shell on purpose. The
+# obvious `| sha256sum` is GNU-only: OpenBSD and FreeBSD ship sha256, macOS
+# ships shasum, and none of them ship sha256sum. Detecting the tool would fix
+# the hash but not `find` and `sort`, which also differ - and `sort` is
+# locale-dependent, so identical sources can order differently on two machines
+# and produce different fingerprints. tools/stamp does the walk, the ordering
+# and the hashing itself, which removes all three, and costs nothing because
+# the Go toolchain is already required. Please do not "simplify" it back.
+#
+# The empty GOOS/GOARCH/CGO_ENABLED/GOFLAGS are load-bearing. GNU make exports
+# variables set on the command line into every recipe and every sub-make, so
+# `make lib GOOS=windows GOARCH=amd64` puts GOOS=windows into this recipe's
+# environment by way of the $(MAKE) stamp above. A bare `go run` would then
+# cross-compile the generator and fail to execute it ("exec format error"),
+# breaking `make all`, `make android` and every cross build - after the cargo
+# build had already run. An empty assignment reads as "unset" to cmd/go and is
+# a POSIX assignment prefix, so it is safe in ksh, dash and bash alike.
 .PHONY: stamp
 stamp:
-	@hash=$$(cat $(CRATE_DIR)/Cargo.toml $(CRATE_DIR)/Cargo.lock \
-	    $$(find $(CRATE_DIR)/src rust/vendor -type f \( -name '*.rs' -o -name '*.toml' \) | sort) \
-	    | sha256sum | cut -c1-16); \
-	tmp=$$(mktemp); \
-	{ \
-	  echo "// Code generated by \`make stamp\`. DO NOT EDIT."; \
-	  echo; \
-	  echo "package arti"; \
-	  echo; \
-	  echo "// rustFingerprint identifies the Rust sources the linked"; \
-	  echo "// libarti_ffi.a was built from."; \
-	  echo "//"; \
-	  echo "// It exists only to be part of this package's source. Go does not hash"; \
-	  echo "// the static library named in #cgo LDFLAGS, so without a Go-visible"; \
-	  echo "// change a rebuilt library is silently ignored in favour of a cached"; \
-	  echo "// binary. Keeping this in step with the Rust is what makes"; \
-	  echo "// \`make lib && go build\` produce a binary containing the new library."; \
-	  echo "const rustFingerprint = \"$$hash\""; \
-	} > $$tmp; \
-	if cmp -s $$tmp internal/arti/libstamp.go; then \
-	  rm -f $$tmp; \
-	else \
-	  mv $$tmp internal/arti/libstamp.go; \
-	  echo ">> rust fingerprint is now $$hash"; \
-	fi
+	@GOOS= GOARCH= CGO_ENABLED= GOFLAGS= go run ./tools/stamp
 
 ## Build every supported target.
 all:

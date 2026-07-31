@@ -74,7 +74,7 @@ impl Service {
     /// This stops the service serving traffic, but it does not synchronously
     /// release everything the service held: the state directory keeps its lock
     /// until Arti's own background tasks have wound down, which can outlast
-    /// this call. That is why each launch takes a fresh nickname — see
+    /// this call. That is why each launch takes a fresh nickname - see
     /// [`launch`].
     pub fn shutdown(self) {
         self.proxy.shutdown();
@@ -149,7 +149,7 @@ pub fn launch(
     // have wound down, which DEL_ONION does not wait for.
     //
     // Nor can it be a per-process counter. Our keystore is ephemeral, so the
-    // introduction point keys never survive a restart — but the state
+    // introduction point keys never survive a restart - but the state
     // directory does. Reusing `svc-0` on the next run makes Arti find
     // persisted introduction points whose keys are gone, which it reports as
     // an internal bug and recovers from by regenerating every one of them.
@@ -268,7 +268,7 @@ fn spawn_status_watcher(
             // It is deliberately not a proxy for "a descriptor has been
             // uploaded". Arti aggregates the introduction point manager and the
             // publisher into one state, and reports `Bootstrapping` while
-            // either is still working — so the publisher can have a descriptor
+            // either is still working - so the publisher can have a descriptor
             // up minutes before this fires. There is no public accessor for the
             // publisher alone. Callers that must not block on reachability
             // should use `NoWait` and treat the service as usable once it

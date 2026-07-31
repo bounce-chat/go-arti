@@ -5,7 +5,7 @@ package arti
 // A v3 onion address is just the service's ed25519 public key, a checksum and a
 // version byte, base32-encoded. Callers that persist a service key need to turn
 // it back into an address, and to sign with it, without depending on a Tor
-// controller library — so those primitives live here.
+// controller library - so those primitives live here.
 //
 // Private keys use the same 64-byte "expanded" representation as C tor's
 // ED25519-V3 control-port blobs: the clamped scalar followed by the hash
@@ -92,7 +92,7 @@ func PublicKeyFromPrivate(key []byte) (ed25519.PublicKey, error) {
 //
 // [crypto/ed25519] cannot do this: its Sign takes a seed-derived key and
 // re-expands it, whereas an onion service key is only ever available already
-// expanded — for vanity addresses the scalar is chosen directly and no seed
+// expanded - for vanity addresses the scalar is chosen directly and no seed
 // exists. The signature is produced by the same code Arti uses.
 func Sign(key []byte, message []byte) ([]byte, error) {
 	if len(key) != PrivateKeySize {

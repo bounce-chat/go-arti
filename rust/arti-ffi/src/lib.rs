@@ -1,8 +1,8 @@
 //! A minimal C ABI over [Arti](https://gitlab.torproject.org/tpo/core/arti),
 //! built as a static library and linked into Go by the `libtor` package.
 //!
-//! Arti deliberately has no control port — it replaced it with a JSON-RPC API
-//! — so this crate does not try to reimplement one. It exposes just enough of
+//! Arti deliberately has no control port - it replaced it with a JSON-RPC API
+//! - so this crate does not try to reimplement one. It exposes just enough of
 //! Arti (bootstrap, SOCKS, onion services, status events) for the Go side to
 //! present a control-port-compatible face to
 //! [bine](https://github.com/alexballas/bine).

@@ -348,7 +348,7 @@ pub unsafe extern "C" fn arti_next_event(client: *mut Client, timeout_ms: c_int)
 
 /// Start collecting Arti's log records, at the given `EnvFilter` directives.
 ///
-/// Returns 0 if the subscriber was installed, -1 if one was already present —
+/// Returns 0 if the subscriber was installed, -1 if one was already present -
 /// including one belonging to the host application, which is left alone.
 /// Records are then drained with [`arti_next_log`].
 ///

@@ -2,8 +2,8 @@ package arti
 
 // The Arti client.
 //
-// This talks to Arti on its own terms — bootstrap as a call, connectivity as
-// an event stream, onion services as net.Listeners — rather than translating
+// This talks to Arti on its own terms - bootstrap as a call, connectivity as
+// an event stream, onion services as net.Listeners - rather than translating
 // through a control protocol Arti does not have.
 
 import (
@@ -192,7 +192,7 @@ func (c *Client) Status() Status {
 // This replaces polling for connectivity: an update arrives as soon as Arti's
 // view changes, in either direction. The channel is closed when the client is
 // closed. Updates are dropped rather than queued if a receiver falls behind,
-// so a slow consumer cannot stall the client — only the newest status is
+// so a slow consumer cannot stall the client - only the newest status is
 // meaningful anyway.
 //
 // Pass the channel to [Client.Unsubscribe] when finished with it.
