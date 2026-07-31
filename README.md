@@ -13,8 +13,8 @@ Arti is compiled into a static C library, and a thin layer of CGO links it into 
 | arti      | 0.44    |
 
 Everything Arti needs, including SQLite and liblzma, is compiled into that archive, so the
-resulting Go binary has no external dependencies beyond libc. The library is tested on Linux,
-macOS (Intel and Apple Silicon), and Windows.
+resulting Go binary has no external dependencies beyond libc. The library is tested on Linux, Android
+macOS (Intel and Apple Silicon), Windows, and OpenBSD.
 
 > **Upgrading from the C Tor version?** The Go API is unchanged, but the engine underneath is
 > different. See [Differences from C Tor](#differences-from-c-tor) before you upgrade.

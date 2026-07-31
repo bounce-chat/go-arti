@@ -126,9 +126,16 @@ jobs:
       - name: Go tests
         run: go test ./...
 
-      - name: Cross-compile check
-        run: |
-          # Confirms the cgo link lines are well formed for the other targets.
-          # These only type-check; linking needs the matching artifact.
-          GOOS=windows GOARCH=amd64 go vet ./... || true
-          GOOS=darwin GOARCH=arm64 go vet ./... || true
+      # The cgo constraint table is checked by internal/buildcheck, which runs
+      # as part of `go test ./...` above.
+      #
+      # This step used to be `GOOS=windows GOARCH=amd64 go vet ./...`, which
+      # cannot work. Cross-compiling defaults CGO_ENABLED=0, a file importing
+      # "C" is then excluded from the package, and every symbol cgo.go defines
+      # becomes undefined - so it printed a wall of "undefined: artiClient"
+      # errors on every run without ever parsing a #cgo line. It was wrapped in
+      # `|| true` and so could never fail, which only trained people to ignore
+      # the output. Genuinely type-checking a cgo package for another platform
+      # needs a cross C toolchain and that platform's archive, and the build
+      # job above already covers that ground by compiling all five targets
+      # natively.
