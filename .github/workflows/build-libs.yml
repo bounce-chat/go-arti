@@ -87,6 +87,34 @@ jobs:
           path: dist/*.a
           retention-days: 1
 
+  # The fingerprint must come out identical on every platform, because the job
+  # below diffs the committed value. Checking that on one Linux runner makes it
+  # an aspiration rather than a test, and Windows is both the likeliest place to
+  # diverge - path separators and core.autocrlf - and the one nothing recomputed.
+  #
+  # This needs no Rust toolchain and no archive: tools/stamp only reads sources.
+  # LANG is set explicitly on macOS because CI's empty LANG masks exactly the
+  # collation class of bug that moving the sort into Go was meant to rule out.
+  fingerprint:
+    name: Fingerprint is reproducible (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Recompute and compare
+        shell: bash
+        env:
+          LANG: en_US.UTF-8
+        run: |
+          go run ./tools/stamp
+          git diff --exit-code internal/arti/libstamp.go
+
   test:
     name: Tests
     runs-on: ubuntu-latest

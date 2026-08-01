@@ -122,6 +122,21 @@ CARGO_ENV := CC_$(TRIPLE_UNDER)="$(NDK_CLANG)" \
              CARGO_TARGET_$(TRIPLE_UPPER)_LINKER="$(NDK_CLANG)"
 endif
 
+# Cross-compiling the Windows target.
+#
+# Same reason again: the *-pc-windows-gnu triple links with MinGW, and SQLite
+# and liblzma are compiled from C source, so the `cc` crate needs the MinGW
+# driver it derives from the triple. Nothing has to be wired into CARGO_ENV -
+# cc finds x86_64-w64-mingw32-gcc by name - but check-cross tests for it,
+# because without it the build spends about two minutes compiling before dying
+# deep inside a build script with "error calling dlltool", which names neither
+# the missing package nor the target.
+ifeq ($(PLATFORM),windows_amd64)
+ifneq ($(OS),Windows_NT)
+WINDOWS_CROSS_CC ?= x86_64-w64-mingw32-gcc
+endif
+endif
+
 # Building a macOS target anywhere but macOS needs an Apple SDK, which Apple
 # does not license for redistribution. osxcross is the usual way to arrange
 # one; CI builds these on macOS runners instead.
@@ -132,6 +147,11 @@ CARGO_ENV := CC_$(TRIPLE_UNDER)="$(DARWIN_CROSS_CC)" \
              CARGO_TARGET_$(TRIPLE_UPPER)_LINKER="$(DARWIN_CROSS_CC)"
 endif
 endif
+
+# Whichever cross compiler this target needs, if any. At most one of the three
+# is ever set, so concatenating them names it. Defined after all three blocks
+# because := evaluates immediately; `doctor` reports on it.
+CROSS_CC := $(LINUX_CROSS_CC)$(DARWIN_CROSS_CC)$(WINDOWS_CROSS_CC)
 
 .PHONY: lib all android test test-rust test-go check-features arti-check \
         arti-update clean check-target check-android check-cross doctor
@@ -145,7 +165,18 @@ endif
 	@# Debian, Fedora) has no rustup and ships only the host's standard
 	@# library - which is exactly what a native build needs, so an absent
 	@# rustup means "nothing to check", not "not installed".
+	@#
+	@# The toolchain check comes first because rustup installed with no default
+	@# toolchain fails the target check too, and the advice it gives - `rustup
+	@# target add` - fails as well, with "no installed toolchains". Telling
+	@# someone to run a command that cannot work is worse than saying nothing.
 	@command -v rustup >/dev/null 2>&1 || exit 0; \
+	rustup show active-toolchain >/dev/null 2>&1 || { \
+	    echo "make: rustup is installed but has no default toolchain, so there"; \
+	    echo "      is no rustc to build with."; \
+	    echo "      fix it with: rustup default stable"; \
+	    exit 1; \
+	}; \
 	rustup target list --installed 2>/dev/null | grep -qx '$(TRIPLE)' || { \
 	    echo "make: the Rust standard library for $(TRIPLE) is not installed."; \
 	    echo "      install it with: rustup target add $(TRIPLE)"; \
@@ -179,6 +210,17 @@ ifdef DARWIN_CROSS_CC
 	    echo "      to install. Either build on a Mac, let CI do it (the release"; \
 	    echo "      workflow uses macOS runners), or set up osxcross and put"; \
 	    echo "      $(DARWIN_CROSS_CC) on PATH."; \
+	    exit 1; \
+	}
+endif
+ifdef WINDOWS_CROSS_CC
+	@command -v $(WINDOWS_CROSS_CC) >/dev/null || { \
+	    echo "make: $(WINDOWS_CROSS_CC) not found."; \
+	    echo "      cross-compiling $(PLATFORM) needs MinGW: the *-pc-windows-gnu"; \
+	    echo "      triple links with it rather than MSVC, and SQLite and liblzma"; \
+	    echo "      are compiled from C source."; \
+	    echo "      Arch:   sudo pacman -S mingw-w64-gcc"; \
+	    echo "      Debian: sudo apt install gcc-mingw-w64-x86-64"; \
 	    exit 1; \
 	}
 endif
@@ -260,10 +302,13 @@ android:
 ## Report what the toolchain looks like for the current target.
 doctor:
 	@echo "target:      $(GOOS)/$(GOARCH) -> $(if $(TRIPLE),$(TRIPLE),UNSUPPORTED)"
-	@echo "rust target: $$(rustup target list --installed 2>/dev/null | grep -qx '$(TRIPLE)' && echo installed || echo 'MISSING - rustup target add $(TRIPLE)')"
+	@# Same reasoning as check-target: no rustup means there is nothing for
+	@# rustup to check, not a broken toolchain. Telling someone on an OpenBSD
+	@# ports rustc to run `rustup target add` is advice they cannot follow.
+	@echo "rust target: $$(command -v rustup >/dev/null 2>&1 || { echo 'n/a (no rustup; using the system rustc)'; exit 0; }; rustup target list --installed 2>/dev/null | grep -qx '$(TRIPLE)' && echo installed || echo 'MISSING - rustup target add $(TRIPLE)')"
 	@echo "android ndk: $(if $(ANDROID_NDK_DIR),$(ANDROID_NDK_DIR),none found)"
 	@echo "android cc:  $(if $(filter android,$(GOOS)),$(NDK_CLANG) $(if $(wildcard $(NDK_CLANG)),(ok),(MISSING)),n/a)"
-	@echo "cross cc:    $(if $(LINUX_CROSS_CC)$(DARWIN_CROSS_CC),$(LINUX_CROSS_CC)$(DARWIN_CROSS_CC) $$(command -v $(LINUX_CROSS_CC)$(DARWIN_CROSS_CC) >/dev/null && echo '(ok)' || echo '(MISSING)'),n/a)"
+	@echo "cross cc:    $(if $(CROSS_CC),$(CROSS_CC) $$(command -v $(CROSS_CC) >/dev/null && echo '(ok)' || echo '(MISSING)'),n/a)"
 
 # The feature set arti-client is expected to resolve to.
 #
@@ -291,8 +336,13 @@ check-features:
 	@actual=$$(cd $(CRATE_DIR) && cargo tree -f '{p} {f}' --depth 1 2>/dev/null \
 	    | grep 'arti-client v' \
 	    | sed 's/.*arti-client v[0-9.]* //' \
-	    | tr ',' '\n' | sed 's/^ *//;s/ *$$//' | grep -v '^$$' | sort | tr '\n' ' '); \
-	expected=$$(printf '%s\n' $(ARTI_FEATURES) | sort | tr '\n' ' '); \
+	    | tr ',' '\n' | sed 's/^ *//;s/ *$$//' | grep -v '^$$' | LC_ALL=C sort | tr '\n' ' '); \
+	expected=$$(printf '%s\n' $(ARTI_FEATURES) | LC_ALL=C sort | tr '\n' ' '); \
+	if [ -z "$$actual" ]; then \
+	    echo "make: could not read arti-client's feature set. cargo says:"; \
+	    cd $(CRATE_DIR) && cargo tree -f '{p} {f}' --depth 1 >/dev/null; \
+	    exit 1; \
+	fi; \
 	if [ "$$actual" != "$$expected" ]; then \
 	    echo "make: arti-client's feature set has changed."; \
 	    echo "      expected: $$expected"; \
@@ -318,11 +368,10 @@ arti-check:
 	@latest=$$(cargo search arti-client --limit 1 2>/dev/null \
 	    | sed -n 's/^arti-client = "\([^"]*\)".*/\1/p'); \
 	echo "arti published: $${latest:-unknown}"; \
-	case "$$latest" in \
-	    "$(ARTI_PINNED)"*) echo ">> up to date";; \
-	    "") echo ">> could not reach crates.io";; \
-	    *) echo ">> newer release available; run 'make arti-update'";; \
-	esac
+	series=$$(echo "$$latest" | cut -d. -f1,2); \
+	if [ -z "$$latest" ]; then echo ">> could not reach crates.io"; \
+	elif [ "$$series" = "$(ARTI_PINNED)" ]; then echo ">> up to date"; \
+	else echo ">> newer release available; run 'make arti-update'"; fi
 	@echo
 	@echo "vendored patches:"
 	@latest=$$(cargo search saturating-time --limit 1 2>/dev/null \
@@ -345,13 +394,24 @@ arti-update:
 	    echo ">> already on $(ARTI_PINNED); nothing to bump"; \
 	else \
 	    echo ">> $(ARTI_PINNED) -> $$series"; \
-	    sed -i 's/version = "$(ARTI_PINNED)"/version = "'$$series'"/g; s/= "$(ARTI_PINNED)"$$/= "'$$series'"/g' \
-	        $(CRATE_DIR)/Cargo.toml; \
-	    sed -i 's/"Arti $(ARTI_PINNED)\\0"/"Arti '$$series'\\0"/; s/ARTI_VERSION: &str = "$(ARTI_PINNED)"/ARTI_VERSION: \&str = "'$$series'"/' \
-	        $(CRATE_DIR)/src/lib.rs; \
+	    for f in $(CRATE_DIR)/Cargo.toml $(CRATE_DIR)/src/lib.rs; do \
+	        sed 's/version = "$(ARTI_PINNED)"/version = "'$$series'"/g; \
+	             s/= "$(ARTI_PINNED)"$$/= "'$$series'"/g; \
+	             s/"Arti $(ARTI_PINNED)\\0"/"Arti '$$series'\\0"/; \
+	             s/ARTI_VERSION: &str = "$(ARTI_PINNED)"/ARTI_VERSION: \&str = "'$$series'"/' \
+	            "$$f" > "$$f.new" && mv "$$f.new" "$$f" || exit 1; \
+	    done; \
 	fi
 	@echo ">> resolving"
-	@cd $(CRATE_DIR) && cargo update 2>&1 | tail -20
+	@# The pipeline's status would be tail's, so a failed resolution would fall
+	@# through into check-features, test-rust, lib and test-go against an
+	@# inconsistent lockfile.
+	@out=$$(cd $(CRATE_DIR) && cargo update 2>&1) || { \
+	    printf '%s\n' "$$out" | tail -n 20; \
+	    echo "make: cargo update failed; not continuing into the build"; \
+	    exit 1; \
+	}; \
+	printf '%s\n' "$$out" | tail -n 20
 	@echo ">> the auxiliary crates (safelog, fs-mistrust) version separately;"
 	@echo "   if resolution failed above, they are the usual reason."
 	@$(MAKE) --no-print-directory check-features

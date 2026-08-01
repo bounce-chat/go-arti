@@ -1,0 +1,15 @@
+# The Rust sources are fingerprinted byte for byte by `make stamp`, and the
+# generated file it writes is committed and diffed in CI. A Git for Windows
+# checkout defaults to core.autocrlf=true, which would rewrite both on the way
+# out of the object store: the fingerprint would differ from every other
+# platform for identical sources, and libstamp.go would never compare equal to
+# what the generator writes, so `make lib` would rewrite it on every run and
+# leave the tree permanently dirty.
+#
+# tools/stamp folds CRLF defensively when hashing as well. Keep both: this half
+# also keeps the working tree clean, and it only governs checkouts made after it
+# lands.
+*.rs   text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+internal/arti/libstamp.go text eol=lf
