@@ -101,7 +101,7 @@ const (
 	SignatureSize  = backend.SignatureSize
 )
 
-// ProviderVersion returns the Tor provider name and version, e.g. "Arti 0.44".
+// ProviderVersion returns the Tor provider name and version, e.g. "Arti 0.45".
 func ProviderVersion() string {
 	return backend.ProviderVersion()
 }

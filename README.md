@@ -10,7 +10,7 @@ Arti is compiled into a static C library, and a thin layer of CGO links it into 
 
 | Component | Version |
 |:---------:|:-------:|
-| arti      | 0.44    |
+| arti      | 0.45    |
 
 Everything Arti needs, including SQLite and liblzma, is compiled into that archive, so the
 resulting Go binary has no external dependencies beyond libc. The library is tested on Linux, Android,

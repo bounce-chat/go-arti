@@ -154,7 +154,7 @@ endif
 CROSS_CC := $(LINUX_CROSS_CC)$(DARWIN_CROSS_CC)$(WINDOWS_CROSS_CC)
 
 .PHONY: lib all android test test-rust test-go check-features arti-check \
-        arti-update clean check-target check-android check-cross doctor
+        arti-update arti-retarget clean check-target check-android check-cross doctor
 
 check-target:
 ifeq ($(TRIPLE),)
@@ -355,12 +355,16 @@ check-features:
 #
 # Keeping up with Arti.
 #
-# The Arti release version appears in five places: the tor-*/arti-* pins in
+# The Arti release version appears in six places: the tor-*/arti-* pins in
 # rust/arti-ffi/Cargo.toml, Cargo.lock, ARTI_VERSION and ARTI_VERSION_C in
-# src/lib.rs, and the table in README.md. `arti-update` moves the first four
-# together; the README and the live tests are on you.
+# src/lib.rs, the table in README.md, and the ProviderVersion doc comment in
+# arti.go. `arti-retarget` moves all of them; only the live tests are on you.
 ARTI_PINNED := $(shell sed -n 's/^pub const ARTI_VERSION: &str = "\(.*\)";/\1/p' \
                    $(CRATE_DIR)/src/lib.rs)
+
+# Every file naming the version, and the substitutions that move it. Cargo.lock
+# is not here: `cargo update` rewrites it.
+VERSION_FILES := $(CRATE_DIR)/Cargo.toml $(CRATE_DIR)/src/lib.rs README.md arti.go
 
 ## Report the pinned Arti version against what is published.
 arti-check:
@@ -384,6 +388,35 @@ arti-check:
 	    echo "  >> still the version the patch was written against"; \
 	fi
 
+## Rewrite the pinned Arti version in every file naming it. `make arti-retarget
+## SERIES=0.46`. Split out of arti-update so it can be exercised on its own,
+## without a crates.io round trip or a rebuild - the substitutions below only
+## behave the same through make as they do by hand if the continuation
+## backslashes stay outside the quotes, which is easy to get wrong and was.
+arti-retarget:
+	@# One shell for the whole recipe: an `exit 0` on a line of its own would
+	@# end only that line's shell, and make would run the check below anyway.
+	@if [ -z "$(SERIES)" ]; then \
+	    echo "make: set SERIES, e.g. make arti-retarget SERIES=0.46"; exit 1; \
+	fi; \
+	if [ "$(SERIES)" = "$(ARTI_PINNED)" ]; then \
+	    echo ">> already on $(ARTI_PINNED)"; exit 0; \
+	fi; \
+	for f in $(VERSION_FILES); do \
+	    sed -e 's/version = "$(ARTI_PINNED)"/version = "$(SERIES)"/g' \
+	        -e 's/= "$(ARTI_PINNED)"$$/= "$(SERIES)"/g' \
+	        -e 's/"Arti $(ARTI_PINNED)\\0"/"Arti $(SERIES)\\0"/' \
+	        -e 's/ARTI_VERSION: &str = "$(ARTI_PINNED)"/ARTI_VERSION: \&str = "$(SERIES)"/' \
+	        -e 's/"Arti $(ARTI_PINNED)"/"Arti $(SERIES)"/g' \
+	        -e 's/^\(| arti  *| \)$(ARTI_PINNED)/\1$(SERIES)/' \
+	        "$$f" > "$$f.new" \
+	        && mv "$$f.new" "$$f" || { rm -f "$$f.new"; exit 1; }; \
+	done; \
+	if grep -rnF '$(ARTI_PINNED)' $(VERSION_FILES); then \
+	    echo "make: $(ARTI_PINNED) still present above; add a pattern"; exit 1; \
+	fi; \
+	echo ">> retargeted to $(SERIES)"
+
 ## Bump the Arti dependencies and run everything that does not need a network.
 arti-update:
 	@latest=$$(cargo search arti-client --limit 1 2>/dev/null \
@@ -394,13 +427,7 @@ arti-update:
 	    echo ">> already on $(ARTI_PINNED); nothing to bump"; \
 	else \
 	    echo ">> $(ARTI_PINNED) -> $$series"; \
-	    for f in $(CRATE_DIR)/Cargo.toml $(CRATE_DIR)/src/lib.rs; do \
-	        sed 's/version = "$(ARTI_PINNED)"/version = "'$$series'"/g; \
-	             s/= "$(ARTI_PINNED)"$$/= "'$$series'"/g; \
-	             s/"Arti $(ARTI_PINNED)\\0"/"Arti '$$series'\\0"/; \
-	             s/ARTI_VERSION: &str = "$(ARTI_PINNED)"/ARTI_VERSION: \&str = "'$$series'"/' \
-	            "$$f" > "$$f.new" && mv "$$f.new" "$$f" || exit 1; \
-	    done; \
+	    $(MAKE) --no-print-directory arti-retarget SERIES=$$series || exit 1; \
 	fi
 	@echo ">> resolving"
 	@# The pipeline's status would be tail's, so a failed resolution would fall
@@ -421,7 +448,6 @@ arti-update:
 	@echo
 	@echo ">> offline checks passed. Still to do by hand:"
 	@echo "     - go test -tags integration -timeout 40m ./...   (the real check)"
-	@echo "     - update the arti version in README.md"
 	@echo "     - re-read the Arti changelog for behaviour changes; the status"
 	@echo "       enums and the experimental APIs we use are not stable"
 

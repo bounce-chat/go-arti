@@ -24,10 +24,10 @@ pub mod socks;
 /// NUL-terminated so `arti_version` can hand out a pointer to it directly,
 /// without allocating or leaking. Kept in step with `Cargo.toml` by
 /// `arti_version_matches_manifest` below.
-pub(crate) const ARTI_VERSION_C: &str = "Arti 0.44\0";
+pub(crate) const ARTI_VERSION_C: &str = "Arti 0.45\0";
 
 /// The Arti version this library is built against.
-pub const ARTI_VERSION: &str = "0.44";
+pub const ARTI_VERSION: &str = "0.45";
 
 #[cfg(test)]
 mod test {

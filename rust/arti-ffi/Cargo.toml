@@ -20,7 +20,7 @@ default = ["compression"]
 compression = ["arti-client/compression"]
 
 [dependencies]
-arti-client = { version = "0.44", default-features = false, features = [
+arti-client = { version = "0.45", default-features = false, features = [
     "tokio",
     "rustls",
     "onion-service-client",
@@ -34,14 +34,14 @@ arti-client = { version = "0.44", default-features = false, features = [
     # point of linking statically.
     "static-sqlite",
 ] }
-tor-rtcompat = { version = "0.44", features = ["tokio", "rustls"] }
-tor-hsservice = "0.44"
-tor-hsrproxy = "0.44"
-tor-hscrypto = "0.44"
-tor-llcrypto = "0.44"
-tor-config = "0.44"
-tor-keymgr = "0.44"
-tor-persist = "0.44"
+tor-rtcompat = { version = "0.45", features = ["tokio", "rustls"] }
+tor-hsservice = "0.45"
+tor-hsrproxy = "0.45"
+tor-hscrypto = "0.45"
+tor-llcrypto = "0.45"
+tor-config = "0.45"
+tor-keymgr = "0.45"
+tor-persist = "0.45"
 fs-mistrust = "0.15"
 safelog = "0.9"
 
