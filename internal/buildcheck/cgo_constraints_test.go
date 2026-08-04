@@ -16,7 +16,7 @@ import (
 const cgoFile = "../arti/cgo.go"
 
 // platforms is every target the Makefile can build. Keep in step with TARGETS,
-// ANDROID_TARGETS, openbsd_amd64 and ios_arm64 there.
+// ANDROID_TARGETS, openbsd_amd64, freebsd_amd64 and ios_arm64 there.
 var platforms = []struct{ goos, goarch string }{
 	{"linux", "amd64"},
 	{"linux", "arm64"},
@@ -24,6 +24,7 @@ var platforms = []struct{ goos, goarch string }{
 	{"darwin", "arm64"},
 	{"windows", "amd64"},
 	{"openbsd", "amd64"},
+	{"freebsd", "amd64"},
 	{"android", "arm64"},
 	{"android", "arm"},
 	{"android", "amd64"},

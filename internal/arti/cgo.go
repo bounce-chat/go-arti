@@ -24,6 +24,7 @@ package arti
 #cgo darwin,arm64,!ios     LDFLAGS: -L${SRCDIR}/../../lib/darwin_arm64
 #cgo windows,amd64         LDFLAGS: -L${SRCDIR}/../../lib/windows_amd64
 #cgo openbsd,amd64         LDFLAGS: -L${SRCDIR}/../../lib/openbsd_amd64
+#cgo freebsd,amd64         LDFLAGS: -L${SRCDIR}/../../lib/freebsd_amd64
 #cgo android,arm64         LDFLAGS: -L${SRCDIR}/../../lib/android_arm64
 #cgo android,arm           LDFLAGS: -L${SRCDIR}/../../lib/android_arm
 #cgo android,amd64         LDFLAGS: -L${SRCDIR}/../../lib/android_amd64
@@ -47,6 +48,24 @@ package arti
 // There is deliberately no -ldl: OpenBSD has no libdl, because dlopen and
 // friends live in libc, and asking for it fails the link outright.
 #cgo openbsd        LDFLAGS: -larti_ffi -lpthread -lc++abi -lm -lutil -lexecinfo -lcompiler_rt
+// FreeBSD's list, from the same command for x86_64-unknown-freebsd and again
+// minus -lc. Almost none of the OpenBSD line transfers, so it is derived
+// rather than copied:
+//
+//   * -lgcc_s provides the unwinder here. FreeBSD pairs libc++ with libcxxrt
+//     and ships no libc++abi at all, so the OpenBSD spelling does not just
+//     misname the library - it names one that does not exist.
+//   * -lgeom, -lkvm, -lmemstat, -lprocstat and -ldevstat come from sysinfo,
+//     which arrives via tor-memquota to read total system memory. sysinfo asks
+//     for none of them on OpenBSD, which is why that line is so much shorter.
+//   * no -lcompiler_rt, which OpenBSD does need: rustc does not ask for it
+//     here.
+//
+// There is no -ldl, matching OpenBSD, because dlopen lives in libc. FreeBSD
+// does ship a stub libdl.so for portability, so unlike OpenBSD asking for it
+// would link rather than fail - it is simply pointless, which is why the libdl
+// guard in internal/buildcheck stays OpenBSD-only.
+#cgo freebsd        LDFLAGS: -larti_ffi -lgeom -lrt -lutil -lexecinfo -lkvm -lmemstat -lprocstat -ldevstat -lpthread -lgcc_s -lm
 #cgo darwin,!ios    LDFLAGS: -larti_ffi -framework CoreFoundation -framework Security
 #cgo ios            LDFLAGS: -larti_ffi -framework CoreFoundation -framework Security
 #cgo windows        LDFLAGS: -larti_ffi -lws2_32 -luserenv -lbcrypt -lntdll -ladvapi32 -lcrypt32 -lsecur32
