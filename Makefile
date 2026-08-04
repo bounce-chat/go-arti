@@ -41,12 +41,13 @@ TRIPLE_darwin_amd64  := x86_64-apple-darwin
 TRIPLE_darwin_arm64  := aarch64-apple-darwin
 TRIPLE_windows_amd64 := x86_64-pc-windows-gnu
 
-# OpenBSD builds natively only, so it is not in TARGETS. Cross-compiling to it
-# would need an OpenBSD sysroot to link SQLite and liblzma against, and OpenBSD
-# does not ship one for other hosts to consume. Build it on an OpenBSD machine
-# with `gmake lib` - note gmake, since this Makefile uses GNU syntax and
-# OpenBSD's make is BSD make.
+# The BSDs build natively only, so they are not in TARGETS. Cross-compiling to
+# either would need that system's sysroot to link SQLite and liblzma against,
+# and neither ships one for other hosts to consume. Build them on the machine
+# itself with `gmake lib` - note gmake, since this Makefile uses GNU syntax and
+# both ship BSD make as `make`.
 TRIPLE_openbsd_amd64 := x86_64-unknown-openbsd
+TRIPLE_freebsd_amd64 := x86_64-unknown-freebsd
 
 # Mobile targets are buildable but not prebuilt, because they need an Android
 # NDK or an iOS SDK that CI does not carry.
@@ -158,7 +159,7 @@ CROSS_CC := $(LINUX_CROSS_CC)$(DARWIN_CROSS_CC)$(WINDOWS_CROSS_CC)
 
 check-target:
 ifeq ($(TRIPLE),)
-	$(error unsupported target $(GOOS)/$(GOARCH); supported: $(TARGETS) $(ANDROID_TARGETS) openbsd_amd64 ios_arm64)
+	$(error unsupported target $(GOOS)/$(GOARCH); supported: $(TARGETS) $(ANDROID_TARGETS) openbsd_amd64 freebsd_amd64 ios_arm64)
 endif
 	@# Only rustup can add standard libraries, so only ask it when it is what
 	@# manages this toolchain. A distribution-packaged rustc (OpenBSD ports,

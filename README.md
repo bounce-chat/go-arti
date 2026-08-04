@@ -14,7 +14,7 @@ Arti is compiled into a static C library, and a thin layer of CGO links it into 
 
 Everything Arti needs, including SQLite and liblzma, is compiled into that archive, so the
 resulting Go binary has no external dependencies beyond libc. The library is tested on Linux, Android,
-macOS (Intel and Apple Silicon), Windows, and OpenBSD.
+macOS (Intel and Apple Silicon), Windows, OpenBSD, and FreeBSD.
 
 > **Upgrading from the C Tor version?** The Go API is unchanged, but the engine underneath is
 > different. See [Differences from C Tor](#differences-from-c-tor) before you upgrade.
@@ -54,6 +54,20 @@ Supported targets are `linux/amd64`, `linux/arm64`, `darwin/amd64`, `darwin/arm6
 `windows/amd64`, plus the mobile targets below. On Windows the library must be built for the
 `x86_64-pc-windows-gnu` triple, which the Makefile selects automatically - CGO links with MinGW, so
 an MSVC-target `.lib` will not resolve.
+
+`openbsd/amd64` and `freebsd/amd64` are supported too, but natively only, so they are not in
+`make all`. Cross-compiling to either would need that system's sysroot to link SQLite and liblzma
+against, and neither ships one for other hosts to consume. Build on the machine itself, with `gmake`
+rather than `make` - this Makefile is GNU syntax and both BSDs ship BSD make as `make`:
+
+```
+$ gmake lib
+```
+
+Their Rust usually comes from ports rather than rustup, which is all a native build needs; `gmake
+doctor` reports `rust target: n/a (no rustup; using the system rustc)` and that is not a problem.
+The two link against quite different system libraries - see the comments in `internal/arti/cgo.go`,
+which are derived from `rustc --print native-static-libs` rather than guessed.
 
 ### Cross-compilation toolchains
 
