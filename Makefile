@@ -8,7 +8,7 @@
 #
 # The result lands in lib/<goos>_<goarch>/libarti_ffi.a, which is where the
 # #cgo LDFLAGS in internal/arti/cgo.go look for it. lib/ is not tracked in git: the
-# archives are ~150 MB each, far too much to carry in a Go module.
+# archives are 50-80 MB each, far too much to carry in a Go module.
 #
 # Building from source is the only path. Consuming applications ship their own
 # binaries, so there is nothing to gain from distributing prebuilt archives and
@@ -154,8 +154,120 @@ endif
 # because := evaluates immediately; `doctor` reports on it.
 CROSS_CC := $(LINUX_CROSS_CC)$(DARWIN_CROSS_CC)$(WINDOWS_CROSS_CC)
 
+#
+# Stripping embedded LLVM bitcode.
+#
+# Go 1.27.4 and 1.26.11 refuse to link an archive whose objects carry LLVM
+# bitcode: `disallowed LTO section ".llvmbc" in #cgo LDFLAGS`. The check was
+# written to stop linker flags being smuggled in through LTO sections, and it
+# catches every Rust staticlib by accident, because the precompiled standard
+# library ships with its bitcode embedded whatever this crate's profile asks
+# for. The fix is tracked in https://go.dev/issue/83126 and milestoned for
+# 1.27.5 and 1.26.12, after which the strip is no longer required. It is worth
+# keeping anyway: the Go link never does LTO against this archive, so the
+# bitcode is dead weight, and it is more than half of the file.
+#
+# The tool has to understand the *target's* objects. Both ways of getting that
+# wrong are silent, which is why it is chosen per target rather than left as
+# whatever `objcopy` is on PATH:
+#
+#   * GNU objcopy handed another architecture's objects warns "Unable to
+#     recognise the architecture" once per member, copies each through
+#     untouched and exits 0. So a cross build uses the binutils that came with
+#     its cross compiler, and Android uses the NDK's llvm-objcopy.
+#   * OpenBSD's objcopy is GNU binutils 2.17. It does remove the sections, and
+#     exits 0, having also rewritten every R_X86_64_REX_GOTPCRELX relocation -
+#     a type newer than it is - as R_X86_64_NONE: 141 GOT loads in this
+#     archive that the linker would then never fix up. Base ships llvm-objcopy
+#     as well, which gets it right. FreeBSD's objcopy already is llvm-objcopy.
+#
+# Mach-O differs twice over. The sections are named __LLVM,__bitcode and
+# __LLVM,__cmdline, and Go rejects anything at all in the __LLVM segment. And
+# macOS has no objcopy. Xcode's bitcode_strip looks like the tool for the job
+# and is not: on object files it hands the work to `ld -r` with an option the
+# current linker no longer has, and dies with "internal link edit command
+# failed" (Xcode 16.3). What does work is already installed - rustup
+# toolchains carry llvm-objcopy in the sysroot as rust-objcopy - so on a Mac
+# that is looked for first, with an llvm-objcopy on PATH as the fallback for a
+# rustc that does not ship one.
+#
+# Only on a Mac, though. The same file exists in a Linux sysroot but is linked
+# against rustc's private libLLVM and will not start outside rustc ("error
+# while loading shared libraries"), so building darwin from anywhere else
+# goes straight to llvm-objcopy.
+#
+# Building on Windows needs rust-objcopy for a different reason: MinGW's
+# objcopy understands the objects perfectly well and still cannot do the job.
+# A windows-gnu staticlib bundles import-library stubs, so the same member name
+# turns up again and again (kernel32.dllt.o six times over, some 1,800 names
+# repeated in all), and GNU objcopy wants a fresh temporary directory for each
+# repeat. Built for Windows it can make 27 and no more - measured: an archive
+# of 27 members all called a.o copies, one of 28 fails - and gives up with
+# "cannot create tempdir for archive copying (error: File exists)". The same
+# binutils on Linux has no such limit, which is why cross-compiling from there
+# keeps using it. rust-objcopy.exe runs on its own on Windows, in both the
+# -gnu and the -msvc host toolchains.
+#
+# Override with OBJCOPY=... ; llvm-objcopy reads every format built here.
+MACHO := $(filter darwin ios,$(GOOS))
+
+ifeq ($(MACHO),)
+BITCODE_SECTIONS := .llvmbc .llvmcmd
+BITCODE_MARK     := .llvmbc
+else
+BITCODE_SECTIONS := __LLVM,__bitcode __LLVM,__cmdline
+BITCODE_MARK     := __LLVM
+endif
+
+# NEEDS_LLVM marks the builds where only an LLVM objcopy will do, and
+# RUST_OBJCOPY_RUNS the hosts where the sysroot's copy can be run directly.
+ifneq ($(MACHO),)
+NEEDS_LLVM := yes
+ifeq ($(shell uname -s),Darwin)
+RUST_OBJCOPY_RUNS := yes
+endif
+endif
+ifeq ($(GOOS)/$(OS),windows/Windows_NT)
+NEEDS_LLVM := yes
+RUST_OBJCOPY_RUNS := yes
+endif
+
+# Only the host's directory under lib/rustlib has a bin/, so the glob finds the
+# file without working out the host triple, and matches rust-objcopy.exe as
+# well. The cd is for Windows, where rustc prints the sysroot with backslashes:
+# a shell will change into such a path but will not glob through it, and $PWD
+# comes back in a form it will. (Rewriting the slashes with tr would do too,
+# except that the backslash has to survive make first, and Windows make halves
+# a doubled one.) := under an origin test rather than ?= so that rustc is asked
+# once, not once per reference.
+ifdef NEEDS_LLVM
+ifeq ($(origin OBJCOPY),undefined)
+ifdef RUST_OBJCOPY_RUNS
+OBJCOPY := $(shell d=$$(rustc --print sysroot 2>/dev/null); [ -n "$$d" ] && cd "$$d" 2>/dev/null && ls "$$PWD"/lib/rustlib/*/bin/rust-objcopy* 2>/dev/null | head -n 1)
+endif
+ifeq ($(OBJCOPY),)
+OBJCOPY := llvm-objcopy
+endif
+endif
+endif
+
+ifeq ($(GOOS),android)
+OBJCOPY ?= $(NDK_BIN)/llvm-objcopy
+endif
+ifdef LINUX_CROSS_CC
+OBJCOPY ?= aarch64-linux-gnu-objcopy
+endif
+ifdef WINDOWS_CROSS_CC
+OBJCOPY ?= x86_64-w64-mingw32-objcopy
+endif
+ifeq ($(GOOS),openbsd)
+OBJCOPY ?= llvm-objcopy
+endif
+OBJCOPY ?= objcopy
+
 .PHONY: lib all android test test-rust test-go check-features arti-check \
-        arti-update arti-retarget clean check-target check-android check-cross doctor
+        arti-update arti-retarget clean check-target check-android check-cross \
+        check-objcopy doctor
 
 check-target:
 ifeq ($(TRIPLE),)
@@ -236,12 +348,49 @@ ifdef LINUX_CROSS_CC
 	}
 endif
 
+## Fail early when the tool that strips the bitcode is absent. It is the last
+## step of `lib`, so without this a missing one is only discovered after the
+## whole cargo build.
+check-objcopy:
+	@command -v "$(OBJCOPY)" >/dev/null || { \
+	    echo "make: $(OBJCOPY) not found."; \
+	    echo "      It strips the embedded LLVM bitcode that Go 1.27.4 and 1.26.11"; \
+	    echo "      refuse to link (https://go.dev/issue/83126)."; \
+	    if [ -n "$(NEEDS_LLVM)" ]; then \
+	        echo "      Current rustup toolchains ship one as rust-objcopy, which is"; \
+	        echo "      used when present. Update Rust, or install LLVM and set"; \
+	        echo "      OBJCOPY to its llvm-objcopy."; \
+	    else \
+	        echo "      It ships with binutils, with LLVM and with the Android NDK;"; \
+	        echo "      set OBJCOPY to one that understands $(TRIPLE) objects."; \
+	    fi; \
+	    exit 1; \
+	}
+
 ## Build the library from source for GOOS/GOARCH.
-lib: check-target check-android check-cross
+lib: check-target check-android check-cross check-objcopy
 	@echo ">> building $(LIB_NAME) for $(PLATFORM) ($(TRIPLE))"
 	cd $(CRATE_DIR) && $(CARGO_FLAGS) $(CARGO_ENV) cargo build --release --target $(TRIPLE)
 	@mkdir -p $(OUT_DIR)
-	cp $(CRATE_DIR)/target/$(TRIPLE)/release/$(LIB_NAME) $(OUT_DIR)/$(LIB_NAME)
+	@# Stripped on the way out of cargo's target directory rather than in
+	@# place, so lib/ never holds an archive Go would reject.
+	"$(OBJCOPY)" $(addprefix --remove-section=,$(BITCODE_SECTIONS)) \
+	    $(CRATE_DIR)/target/$(TRIPLE)/release/$(LIB_NAME) $(OUT_DIR)/$(LIB_NAME)
+	@# The exit status above is not evidence: see OBJCOPY for a tool that
+	@# reports success having stripped nothing. This catches that. It cannot
+	@# catch one that damages what it keeps, which is what choosing the tool
+	@# per target is for.
+	@LC_ALL=C grep -qF $(BITCODE_MARK) $(OUT_DIR)/$(LIB_NAME); \
+	case $$? in \
+	    1) ;; \
+	    0) rm -f $(OUT_DIR)/$(LIB_NAME); \
+	       echo "make: $(OBJCOPY) exited 0 but left LLVM bitcode in $(LIB_NAME)."; \
+	       echo "      It most likely does not understand $(TRIPLE) objects; set"; \
+	       echo "      OBJCOPY to one that does. llvm-objcopy reads every format"; \
+	       echo "      built here."; \
+	       exit 1 ;; \
+	    *) echo "make: could not inspect $(OUT_DIR)/$(LIB_NAME)"; exit 1 ;; \
+	esac
 	@echo ">> wrote $(OUT_DIR)/$(LIB_NAME)"
 	@$(MAKE) --no-print-directory stamp
 
@@ -310,6 +459,7 @@ doctor:
 	@echo "android ndk: $(if $(ANDROID_NDK_DIR),$(ANDROID_NDK_DIR),none found)"
 	@echo "android cc:  $(if $(filter android,$(GOOS)),$(NDK_CLANG) $(if $(wildcard $(NDK_CLANG)),(ok),(MISSING)),n/a)"
 	@echo "cross cc:    $(if $(CROSS_CC),$(CROSS_CC) $$(command -v $(CROSS_CC) >/dev/null && echo '(ok)' || echo '(MISSING)'),n/a)"
+	@echo "objcopy:     $(OBJCOPY) $$(command -v "$(OBJCOPY)" >/dev/null && echo '(ok)' || echo '(MISSING)')"
 
 # The feature set arti-client is expected to resolve to.
 #
