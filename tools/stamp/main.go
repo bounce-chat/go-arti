@@ -44,17 +44,16 @@ const fingerprintLen = 16
 // sources are the inputs to the fingerprint, named explicitly.
 //
 // Naming them beats walking all of rust/ in both directions. Walking is
-// fail-open: a sparse checkout, an interrupted `git clean`, or dropping the
-// vendored patch once its fix lands upstream would each hash some subset and
-// report a plausible, wrong fingerprint. Walking is also churn-prone, because
-// any untracked .rs/.toml under rust/ - `rust/.cargo/config.toml` is the
-// obvious one - would change the committed constant and fail CI for a file
-// that is not in the repository.
+// fail-open: a sparse checkout or an interrupted `git clean` would each hash
+// some subset and report a plausible, wrong fingerprint. Anything vendored
+// under rust/ has to be added here by name for the same reason. Walking is
+// also churn-prone, because any untracked .rs/.toml under rust/ -
+// `rust/.cargo/config.toml` is the obvious one - would change the committed
+// constant and fail CI for a file that is not in the repository.
 var sources = []string{
 	"rust/arti-ffi/Cargo.toml",
 	"rust/arti-ffi/Cargo.lock",
 	"rust/arti-ffi/src",
-	"rust/vendor",
 }
 
 func main() {

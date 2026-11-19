@@ -1,7 +1,7 @@
 # Built Arti libraries, 50-80 MB each. Built from source with `make lib`.
 /lib/
 
-# Rust build output, including the vendored crate's own.
+# Rust build output.
 target/
 
 # Per-developer Claude Code permissions, not project configuration.
