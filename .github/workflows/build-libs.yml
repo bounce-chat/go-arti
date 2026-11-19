@@ -1,20 +1,24 @@
 name: Build Arti libraries
 
-# Verifies the static Arti library builds for every supported target, and runs
-# the test suites. Nothing is published: the library is built from source by
-# whoever consumes it.
+# Verifies the static Arti library builds for every supported target, links
+# from Go on each of them, and runs the test suites. Nothing is published: the
+# library is built from source by whoever consumes it.
 
+# cgo.go is in the path lists because its #cgo lines are what the link step in
+# the build job checks; a change to them is a change to what gets linked.
 on:
   push:
     branches: [master]
     paths:
       - 'rust/**'
       - 'Makefile'
+      - 'internal/arti/cgo.go'
       - '.github/workflows/build-libs.yml'
   pull_request:
     paths:
       - 'rust/**'
       - 'Makefile'
+      - 'internal/arti/cgo.go'
       - '.github/workflows/build-libs.yml'
   workflow_dispatch:
 
@@ -33,7 +37,9 @@ jobs:
           # the SQLite and liblzma dependencies are compiled from source, so a
           # working cross-C setup matters as much as the Rust target.
           - { runner: ubuntu-latest, goos: linux,   goarch: amd64, triple: x86_64-unknown-linux-gnu }
-          - { runner: ubuntu-latest, goos: linux,   goarch: arm64, triple: aarch64-unknown-linux-gnu }
+          # `cc` is the C compiler cgo needs to link a target the runner cannot
+          # produce with its default one.
+          - { runner: ubuntu-latest, goos: linux,   goarch: arm64, triple: aarch64-unknown-linux-gnu, cc: aarch64-linux-gnu-gcc }
           - { runner: macos-latest,  goos: darwin,  goarch: arm64, triple: aarch64-apple-darwin }
           - { runner: macos-latest,  goos: darwin,  goarch: amd64, triple: x86_64-apple-darwin }
           - { runner: windows-latest, goos: windows, goarch: amd64, triple: x86_64-pc-windows-gnu }
@@ -41,42 +47,76 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # `make lib` stamps the Rust fingerprint with a Go program and the last
+      # step links from Go, so this job needs a Go toolchain as well as Rust.
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.triple }}
 
+      # Only the package. The Makefile points cargo and the cc crate at the
+      # cross compiler itself, and takes objcopy from the same binutils.
       - name: Install the aarch64 cross toolchain
         if: matrix.triple == 'aarch64-unknown-linux-gnu'
         run: |
           sudo apt-get update
           sudo apt-get install -y gcc-aarch64-linux-gnu
-          mkdir -p ~/.cargo
-          {
-            echo '[target.aarch64-unknown-linux-gnu]'
-            echo 'linker = "aarch64-linux-gnu-gcc"'
-          } >> ~/.cargo/config.toml
-          echo "CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
 
-      - name: Install MinGW
+      # MinGW is the C compiler and linker for the *-pc-windows-gnu triple, and
+      # make is not on the Windows image at all. Neither supplies the tool that
+      # strips the archive: MinGW's objcopy cannot copy one with this many
+      # repeated member names, so on Windows the Makefile uses the rust-objcopy
+      # that comes with the Rust toolchain.
+      - name: Install MinGW and make
         if: matrix.triple == 'x86_64-pc-windows-gnu'
         shell: bash
         run: |
-          choco install mingw --no-progress
+          choco install mingw make --no-progress
           echo "C:\ProgramData\chocolatey\lib\mingw\tools\install\mingw64\bin" >> "$GITHUB_PATH"
 
+      # Through the Makefile, not a copy of its recipe. This step used to run
+      # `cargo build` itself, so CI tested an archive that nobody else builds:
+      # `make lib` also strips the embedded LLVM bitcode that Go 1.27.4 and
+      # 1.26.11 refuse to link (https://go.dev/issue/83126), picking a tool
+      # that can do it for each target, and a bare `cargo build` does neither.
       - name: Build
         shell: bash
+        run: make lib GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}
+
+      # Only a test binary proves a platform's #cgo line: `go build` and
+      # `go vet` both pass with a system library missing from it. Nothing here
+      # used to link anywhere but Linux, and the macOS line was missing
+      # -framework IOKit.
+      #
+      # Where the runner can execute the target, the tests run too. Where it
+      # cannot (linux/arm64 from x86, darwin/amd64 from Apple Silicon) the link
+      # is the whole check, and cgo has to be switched on by hand because
+      # cross-compiling turns it off.
+      - name: Link from Go, and test where the runner can run the result
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: '1'
+          CROSS_CC: ${{ matrix.cc }}
         run: |
-          cd rust/arti-ffi
-          cargo build --release --target ${{ matrix.triple }}
+          if [ "$(go env GOHOSTOS)/$(go env GOHOSTARCH)" = "$GOOS/$GOARCH" ]; then
+            go test ./...
+          else
+            if [ -n "$CROSS_CC" ]; then export CC="$CROSS_CC"; fi
+            go test -c -o "$RUNNER_TEMP/arti.test" ./internal/arti
+          fi
 
       - name: Stage the artifact
         shell: bash
         run: |
           name="libarti_ffi-${{ matrix.goos }}_${{ matrix.goarch }}.a"
           mkdir -p dist
-          cp "rust/arti-ffi/target/${{ matrix.triple }}/release/libarti_ffi.a" "dist/${name}"
+          cp "lib/${{ matrix.goos }}_${{ matrix.goarch }}/libarti_ffi.a" "dist/${name}"
           ls -la dist
 
       # Kept only so the test job can link against the host build; these are

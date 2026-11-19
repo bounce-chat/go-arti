@@ -66,7 +66,19 @@ package arti
 // would link rather than fail - it is simply pointless, which is why the libdl
 // guard in internal/buildcheck stays OpenBSD-only.
 #cgo freebsd        LDFLAGS: -larti_ffi -lgeom -lrt -lutil -lexecinfo -lkvm -lmemstat -lprocstat -ldevstat -lpthread -lgcc_s -lm
-#cgo darwin,!ios    LDFLAGS: -larti_ffi -framework CoreFoundation -framework Security
+// macOS's list, from the same command for x86_64-apple-darwin, minus -lSystem,
+// -lc and -lm, which the compiler driver adds itself:
+//
+//   * -framework IOKit is sysinfo again, the dependency behind FreeBSD's extra
+//     libraries: its Apple backend reads CPU and platform details out of the
+//     IORegistry. Without it the link fails with undefined _IOServiceMatching,
+//     _IORegistryEntryCreateCFProperty and the rest of that family.
+//   * -liconv is on rustc's list, so it is here, although nothing currently
+//     fails to resolve without it.
+//
+// -framework Security is not on rustc's list. It is kept from before the list
+// was derived rather than removed on the strength of one architecture's output.
+#cgo darwin,!ios    LDFLAGS: -larti_ffi -framework IOKit -framework CoreFoundation -framework Security -liconv
 #cgo ios            LDFLAGS: -larti_ffi -framework CoreFoundation -framework Security
 #cgo windows        LDFLAGS: -larti_ffi -lws2_32 -luserenv -lbcrypt -lntdll -ladvapi32 -lcrypt32 -lsecur32
 
