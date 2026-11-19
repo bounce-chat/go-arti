@@ -191,10 +191,23 @@ CROSS_CC := $(LINUX_CROSS_CC)$(DARWIN_CROSS_CC)$(WINDOWS_CROSS_CC)
 # that is looked for first, with an llvm-objcopy on PATH as the fallback for a
 # rustc that does not ship one.
 #
-# Only on a Mac, though. The same file exists in a Linux sysroot but is linked
-# against rustc's private libLLVM and will not start outside rustc ("error
-# while loading shared libraries"), so building darwin from anywhere else
-# goes straight to llvm-objcopy.
+# It does not always start by itself. Rust 1.97's has LLVM linked in; Rust
+# 1.100's loads libLLVM.dylib instead, through an rpath that points at
+# lib/rustlib/<host>/lib, and only the optional llvm-tools component puts a
+# copy there. On a default install it dies in dyld: "Library not loaded:
+# @rpath/libLLVM.dylib". The library is in the sysroot all the same, in lib/,
+# which is where rustc loads it from, so OBJCOPY_ENV gives dyld that directory
+# to fall back on. A fallback is consulted only once the rpath has failed, so
+# it changes nothing for a toolchain whose rust-objcopy already runs.
+#
+# OBJCOPY_ENV has to stay on the command line. macOS removes every DYLD_*
+# variable from the environment of a protected binary, /usr/bin/make and
+# /bin/sh among them, so one exported from here or set by the caller never
+# reaches the recipe.
+#
+# Only on a Mac, though. The same file exists in a Linux sysroot with the same
+# dependency on rustc's libLLVM ("error while loading shared libraries"), and
+# building darwin from anywhere else goes straight to llvm-objcopy.
 #
 # Building on Windows needs rust-objcopy for a different reason: MinGW's
 # objcopy understands the objects perfectly well and still cannot do the job.
@@ -219,12 +232,15 @@ BITCODE_SECTIONS := __LLVM,__bitcode __LLVM,__cmdline
 BITCODE_MARK     := __LLVM
 endif
 
-# NEEDS_LLVM marks the builds where only an LLVM objcopy will do, and
-# RUST_OBJCOPY_RUNS the hosts where the sysroot's copy can be run directly.
+# NEEDS_LLVM marks the builds where only an LLVM objcopy will do,
+# RUST_OBJCOPY_RUNS the hosts where the sysroot's copy can be run, and
+# RUST_OBJCOPY_ENV what it has to be run with. The $$ leaves rustc to be asked
+# by the recipe's shell, which copes with a sysroot path that has spaces in it.
 ifneq ($(MACHO),)
 NEEDS_LLVM := yes
 ifeq ($(shell uname -s),Darwin)
 RUST_OBJCOPY_RUNS := yes
+RUST_OBJCOPY_ENV  := DYLD_FALLBACK_LIBRARY_PATH="$$(rustc --print sysroot)/lib"
 endif
 endif
 ifeq ($(GOOS)/$(OS),windows/Windows_NT)
@@ -239,11 +255,15 @@ endif
 # comes back in a form it will. (Rewriting the slashes with tr would do too,
 # except that the backslash has to survive make first, and Windows make halves
 # a doubled one.) := under an origin test rather than ?= so that rustc is asked
-# once, not once per reference.
+# once, not once per reference. OBJCOPY_ENV goes only with a rust-objcopy
+# found here: an OBJCOPY from the command line or from PATH is run as it is.
 ifdef NEEDS_LLVM
 ifeq ($(origin OBJCOPY),undefined)
 ifdef RUST_OBJCOPY_RUNS
 OBJCOPY := $(shell d=$$(rustc --print sysroot 2>/dev/null); [ -n "$$d" ] && cd "$$d" 2>/dev/null && ls "$$PWD"/lib/rustlib/*/bin/rust-objcopy* 2>/dev/null | head -n 1)
+ifneq ($(OBJCOPY),)
+OBJCOPY_ENV ?= $(RUST_OBJCOPY_ENV)
+endif
 endif
 ifeq ($(OBJCOPY),)
 OBJCOPY := llvm-objcopy
@@ -264,6 +284,10 @@ ifeq ($(GOOS),openbsd)
 OBJCOPY ?= llvm-objcopy
 endif
 OBJCOPY ?= objcopy
+
+# How every recipe runs it. Quoted because a sysroot under a home directory
+# can have a space in its path.
+RUN_OBJCOPY = $(if $(OBJCOPY_ENV),$(OBJCOPY_ENV) )"$(OBJCOPY)"
 
 .PHONY: lib all android test test-rust test-go check-features arti-check \
         arti-update arti-retarget clean check-target check-android check-cross \
@@ -348,9 +372,10 @@ ifdef LINUX_CROSS_CC
 	}
 endif
 
-## Fail early when the tool that strips the bitcode is absent. It is the last
-## step of `lib`, so without this a missing one is only discovered after the
-## whole cargo build.
+## Fail early when the tool that strips the bitcode is absent, or is there and
+## will not start. It is the last step of `lib`, so without this either one is
+## only discovered after the whole cargo build. The second is not hypothetical:
+## see OBJCOPY_ENV for a rust-objcopy that was present and could not load.
 check-objcopy:
 	@command -v "$(OBJCOPY)" >/dev/null || { \
 	    echo "make: $(OBJCOPY) not found."; \
@@ -366,6 +391,13 @@ check-objcopy:
 	    fi; \
 	    exit 1; \
 	}
+	@$(RUN_OBJCOPY) --version >/dev/null || { \
+	    echo "make: $(OBJCOPY) is installed but does not run; its own error is above."; \
+	    echo "      It strips the embedded LLVM bitcode that Go 1.27.4 and 1.26.11"; \
+	    echo "      refuse to link (https://go.dev/issue/83126). Set OBJCOPY to one"; \
+	    echo "      that does run; llvm-objcopy reads every format built here."; \
+	    exit 1; \
+	}
 
 ## Build the library from source for GOOS/GOARCH.
 lib: check-target check-android check-cross check-objcopy
@@ -374,7 +406,7 @@ lib: check-target check-android check-cross check-objcopy
 	@mkdir -p $(OUT_DIR)
 	@# Stripped on the way out of cargo's target directory rather than in
 	@# place, so lib/ never holds an archive Go would reject.
-	"$(OBJCOPY)" $(addprefix --remove-section=,$(BITCODE_SECTIONS)) \
+	$(RUN_OBJCOPY) $(addprefix --remove-section=,$(BITCODE_SECTIONS)) \
 	    $(CRATE_DIR)/target/$(TRIPLE)/release/$(LIB_NAME) $(OUT_DIR)/$(LIB_NAME)
 	@# The exit status above is not evidence: see OBJCOPY for a tool that
 	@# reports success having stripped nothing. This catches that. It cannot
@@ -459,7 +491,7 @@ doctor:
 	@echo "android ndk: $(if $(ANDROID_NDK_DIR),$(ANDROID_NDK_DIR),none found)"
 	@echo "android cc:  $(if $(filter android,$(GOOS)),$(NDK_CLANG) $(if $(wildcard $(NDK_CLANG)),(ok),(MISSING)),n/a)"
 	@echo "cross cc:    $(if $(CROSS_CC),$(CROSS_CC) $$(command -v $(CROSS_CC) >/dev/null && echo '(ok)' || echo '(MISSING)'),n/a)"
-	@echo "objcopy:     $(OBJCOPY) $$(command -v "$(OBJCOPY)" >/dev/null && echo '(ok)' || echo '(MISSING)')"
+	@echo "objcopy:     $(OBJCOPY) $$(command -v "$(OBJCOPY)" >/dev/null || { echo '(MISSING)'; exit 0; }; $(RUN_OBJCOPY) --version >/dev/null 2>&1 && echo '(ok)' || echo '(DOES NOT RUN)')"
 
 # The feature set arti-client is expected to resolve to.
 #
