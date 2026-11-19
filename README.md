@@ -10,7 +10,7 @@ Arti is compiled into a static C library, and a thin layer of CGO links it into 
 
 | Component | Version |
 |:---------:|:-------:|
-| arti      | 0.45    |
+| arti      | 0.48    |
 
 Everything Arti needs, including SQLite and liblzma, is compiled into that archive, so the
 resulting Go binary has no external dependencies beyond libc. The library is tested on Linux, Android,
@@ -297,7 +297,7 @@ The Arti release version appears in five places: the `tor-*`/`arti-*` pins in
 `rust/arti-ffi/src/lib.rs`, and the table at the top of this file.
 
 ```
-$ make arti-check     # what is pinned, what is published, is the vendored patch still needed
+$ make arti-check     # what is pinned and what is published
 $ make arti-update    # bump, resolve, and run every check that does not need a network
 ```
 
@@ -313,21 +313,6 @@ rebuild and the Go tests. It deliberately stops short of two things:
 
 Two crates version separately from the Arti release - `safelog` and `fs-mistrust` - so if a bump
 fails to resolve, they are the usual reason and need bumping by hand.
-
-## Vendored patches
-
-`rust/vendor/saturating-time` is a patched copy of
-[saturating-time](https://codeberg.org/cve/saturating-time) 0.4.0, applied via `[patch.crates-io]`.
-
-Its `find_limit` search halves its step only when a checked add/subtract *fails*. Windows stores
-`SystemTime` as a FILETIME of 100 ns ticks, so a 1 ns step truncates to zero and reports success
-without moving - the step never halves and the loop never terminates. Arti reaches this while
-parsing the very first consensus, so on Windows bootstrap would pin a CPU core and never finish,
-while Linux (nanosecond `timespec`) was unaffected. The patch treats a step that makes no progress
-as out of range, exactly like a failure, and adds a regression test using a mock clock with coarse
-granularity so it is reproducible on any platform.
-
-Remove the vendored copy and the `[patch.crates-io]` entry once a fixed release is published.
 
 ## Differences from C Tor
 

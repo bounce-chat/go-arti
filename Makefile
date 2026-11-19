@@ -559,17 +559,6 @@ arti-check:
 	if [ -z "$$latest" ]; then echo ">> could not reach crates.io"; \
 	elif [ "$$series" = "$(ARTI_PINNED)" ]; then echo ">> up to date"; \
 	else echo ">> newer release available; run 'make arti-update'"; fi
-	@echo
-	@echo "vendored patches:"
-	@latest=$$(cargo search saturating-time --limit 1 2>/dev/null \
-	    | sed -n 's/^saturating-time = "\([^"]*\)".*/\1/p'); \
-	echo "  saturating-time published: $${latest:-unknown} (vendored: 0.4.0)"; \
-	if [ -n "$$latest" ] && [ "$$latest" != "0.4.0" ]; then \
-	    echo "  >> a new release exists; check whether the Windows hang is fixed"; \
-	    echo "     upstream and drop rust/vendor/saturating-time if so."; \
-	else \
-	    echo "  >> still the version the patch was written against"; \
-	fi
 
 ## Rewrite the pinned Arti version in every file naming it. `make arti-retarget
 ## SERIES=0.46`. Split out of arti-update so it can be exercised on its own,

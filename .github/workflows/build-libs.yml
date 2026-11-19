@@ -45,11 +45,11 @@ jobs:
           - { runner: windows-latest, goos: windows, goarch: amd64, triple: x86_64-pc-windows-gnu }
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # `make lib` stamps the Rust fingerprint with a Go program and the last
       # step links from Go, so this job needs a Go toolchain as well as Rust.
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
 
@@ -121,7 +121,7 @@ jobs:
 
       # Kept only so the test job can link against the host build; these are
       # not release artifacts.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: libarti_ffi-${{ matrix.goos }}_${{ matrix.goarch }}
           path: dist/*.a
@@ -143,8 +143,8 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
       - name: Recompute and compare
@@ -160,9 +160,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version: stable
 
@@ -181,7 +181,7 @@ jobs:
       - name: Rust tests
         run: cd rust/arti-ffi && cargo test
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: libarti_ffi-linux_amd64
           path: dist

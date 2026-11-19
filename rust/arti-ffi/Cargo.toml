@@ -20,7 +20,7 @@ default = ["compression"]
 compression = ["arti-client/compression"]
 
 [dependencies]
-arti-client = { version = "0.45", default-features = false, features = [
+arti-client = { version = "0.48", default-features = false, features = [
     "tokio",
     "rustls",
     "onion-service-client",
@@ -34,16 +34,16 @@ arti-client = { version = "0.45", default-features = false, features = [
     # point of linking statically.
     "static-sqlite",
 ] }
-tor-rtcompat = { version = "0.45", features = ["tokio", "rustls"] }
-tor-hsservice = "0.45"
-tor-hsrproxy = "0.45"
-tor-hscrypto = "0.45"
-tor-llcrypto = "0.45"
-tor-config = "0.45"
-tor-keymgr = "0.45"
-tor-persist = "0.45"
-fs-mistrust = "0.15"
-safelog = "0.9"
+tor-rtcompat = { version = "0.48", features = ["tokio", "rustls"] }
+tor-hsservice = "0.48"
+tor-hsrproxy = "0.48"
+tor-hscrypto = "0.48"
+tor-llcrypto = "0.48"
+tor-config = "0.48"
+tor-keymgr = "0.48"
+tor-persist = "0.48"
+fs-mistrust = "0.16"
+safelog = "0.10"
 
 # Arti leaves the rustls crypto provider to the embedding application. We pick
 # `ring` over `aws-lc-rs` because it cross-compiles cleanly to every target we
@@ -66,7 +66,7 @@ tokio-util = { version = "0.7", features = ["compat"] }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-base64 = "0.22"
+base64 = "0.23"
 rand = "0.10"
 
 # Not used directly. Arti's directory compression pulls liblzma in
@@ -84,16 +84,3 @@ strip = true
 # The equivalent `trim-paths` profile option still requires nightly.
 
 [workspace]
-
-# saturating-time 0.4.0 hangs forever on Windows. Its `find_limit` search only
-# halves its step when a checked add/sub fails, but Windows stores SystemTime
-# as a FILETIME of 100ns ticks, so a 1ns step truncates to zero and "succeeds"
-# without moving - the step never halves and the loop never ends. Arti hits
-# this while parsing the very first consensus (tor-netdoc's
-# Preamble::validity_time_range), so bootstrap pins a core and never completes.
-#
-# The vendored copy treats a step that makes no progress as out of range, the
-# same as a failure. Reported upstream; drop this once a fixed release exists.
-# Upstream: https://codeberg.org/cve/saturating-time
-[patch.crates-io]
-saturating-time = { path = "../vendor/saturating-time" }
